@@ -18,6 +18,24 @@ static void beginRs485(uint32_t baud, uint32_t serialConfig, bool invert) {
     taskDelayMs(10);
 }
 
+static bool parseModbusReadResponse(const uint8_t *buffer, uint8_t bufferLen,
+                                    uint8_t address, uint8_t count, uint16_t *out) {
+    const uint8_t frameLen = (uint8_t)(5 + count * 2);
+    if (bufferLen < frameLen) return false;
+
+    for (uint8_t i = 0; i + frameLen <= bufferLen; ++i) {
+        if (buffer[i] != address || buffer[i + 1] != 0x03 || buffer[i + 2] != count * 2) continue;
+        const uint16_t rxCrc = ((uint16_t)buffer[i + frameLen - 1] << 8) | buffer[i + frameLen - 2];
+        if (crc16Modbus(&buffer[i], frameLen - 2) != rxCrc) continue;
+        for (uint8_t j = 0; j < count; ++j) {
+            out[j] = ((uint16_t)buffer[i + 3 + j * 2] << 8) | buffer[i + 4 + j * 2];
+        }
+        return true;
+    }
+
+    return false;
+}
+
 static bool modbusRead(uint8_t address, uint16_t reg, uint8_t count,
                        uint16_t *out, unsigned long timeoutMs = 500) {
     while (Serial2.available()) Serial2.read();
@@ -43,29 +61,26 @@ static bool modbusRead(uint8_t address, uint16_t reg, uint8_t count,
     const uint8_t frameLen = (uint8_t)(5 + count * 2);
     uint8_t buffer[32];
     uint8_t bufferLen = 0;
-    const unsigned long deadline = millis() + timeoutMs;
+    const uint32_t startMs = millis();
 
-    while (bufferLen < sizeof(buffer) && millis() < deadline) {
+    while (bufferLen < sizeof(buffer) && !hasElapsedMs(millis(), startMs, timeoutMs)) {
         if (Serial2.available()) {
             buffer[bufferLen++] = (uint8_t)Serial2.read();
+            if (parseModbusReadResponse(buffer, bufferLen, address, count, out)) return true;
+            if (bufferLen >= frameLen && bufferLen < sizeof(buffer)) continue;
         } else {
             taskDelayMs(1);
         }
     }
 
-    if (bufferLen < frameLen) return false;
+    return parseModbusReadResponse(buffer, bufferLen, address, count, out);
+}
 
-    for (uint8_t i = 0; i + frameLen <= bufferLen; i++) {
-        if (buffer[i] != address || buffer[i + 1] != 0x03 || buffer[i + 2] != count * 2) continue;
-        const uint16_t rxCrc = ((uint16_t)buffer[i + frameLen - 1] << 8) | buffer[i + frameLen - 2];
-        if (crc16Modbus(&buffer[i], frameLen - 2) != rxCrc) continue;
-        for (uint8_t j = 0; j < count; j++) {
-            out[j] = ((uint16_t)buffer[i + 3 + j * 2] << 8) | buffer[i + 4 + j * 2];
-        }
-        return true;
-    }
-
-    return false;
+static void rs485InterQueryDelay() {
+    // Some low-cost sensors need a visibly larger quiet window between
+    // back-to-back requests than the protocol minimum, especially when
+    // sharing the bus with another node.
+    taskDelayMs(BoardConfig::kRs485InterQueryGapMs);
 }
 
 static WindSample pollWindSensors(bool &speedOnline, bool &dirOnline) {
@@ -80,7 +95,7 @@ static WindSample pollWindSensors(bool &speedOnline, bool &dirOnline) {
         speedOnline = false;
     }
 
-    taskDelayMs(5);
+    rs485InterQueryDelay();
 
     if (modbusRead(gWindDirAddrActive, 0x0000, 2, regs)) {
         sample.directionDeg = regs[0] / 10.0f;
@@ -103,7 +118,7 @@ static bool initRs485() {
     auto probe = []() -> bool {
         uint16_t reg = 0;
         bool ok = modbusRead(BoardConfig::kWindSpeedAddr, 0x0000, 1, &reg);
-        taskDelayMs(5);
+        rs485InterQueryDelay();
         ok = modbusRead(BoardConfig::kWindDirAddr, 0x0000, 1, &reg) || ok;
         return ok;
     };
@@ -121,7 +136,7 @@ static bool initRs485() {
 static bool classifyModbusAddr(uint8_t address, bool &isDirectionSensor) {
     uint16_t reg = 0;
     if (!modbusRead(address, 0x0000, 1, &reg, 80)) return false;
-    taskDelayMs(5);
+    rs485InterQueryDelay();
     isDirectionSensor = modbusRead(address, 0x0002, 1, &reg, 80);
     return true;
 }
@@ -198,8 +213,8 @@ static void modbusRawProbe(uint8_t address) {
 
     uint8_t buffer[32];
     uint8_t length = 0;
-    const unsigned long deadline = millis() + 600;
-    while (length < sizeof(buffer) && millis() < deadline) {
+    const uint32_t startMs = millis();
+    while (length < sizeof(buffer) && !hasElapsedMs(millis(), startMs, 600)) {
         if (Serial2.available()) {
             buffer[length++] = (uint8_t)Serial2.read();
         } else {

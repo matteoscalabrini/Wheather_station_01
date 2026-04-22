@@ -65,6 +65,7 @@ struct DisplaySlot {
 struct DisplayRuntimeState {
     TelemetryState lastRendered;
     uint32_t lastActivityMs;
+    uint32_t lastProbeMs;
     bool hasRendered;
     bool powerSave;
 };

@@ -68,15 +68,19 @@ static void primeDisplayRuntimeState(const TelemetryState &snapshot) {
         if (!snapshot.displayOnline[i]) continue;
         gDisplayRuntime[i].lastRendered = snapshot;
         gDisplayRuntime[i].lastActivityMs = nowMs;
+        gDisplayRuntime[i].lastProbeMs = nowMs;
         gDisplayRuntime[i].hasRendered = true;
         gDisplayRuntime[i].powerSave = false;
     }
 }
 
 static void setDisplayOnline(uint8_t index, bool online) {
+    bool changed = false;
     takeMutex(gTelemetryMutex);
+    changed = gTelemetry.displayOnline[index] != online;
     gTelemetry.displayOnline[index] = online;
     giveMutex(gTelemetryMutex);
+    if (changed) requestDisplayRefresh(1U << index);
 }
 
 static void drawCenteredText(U8G2 &display, int16_t y, const char *text) {
@@ -90,57 +94,61 @@ static void drawRightAlignedText(U8G2 &display, int16_t xRight, int16_t y, const
 }
 
 static void drawWindow(U8G2 &display, const char *title, const char *status) {
-    display.drawFrame(2, 14, 124, 112);
-    display.drawBox(3, 15, 122, 10);
-    display.setDrawColor(0);
     display.setFont(u8g2_font_5x8_tf);
-    display.drawStr(7, 23, title);
-    drawRightAlignedText(display, 121, 23, status);
-    display.setDrawColor(1);
+    display.drawStr(4, 8, title);
+    drawRightAlignedText(display, display.getDisplayWidth() - 4, 8, status);
+    display.drawHLine(0, 12, 128);
 }
 
 static void drawSingleMetricDisplay(U8G2 &display, const char *title, const char *status,
                                     const char *label, const char *value) {
     drawWindow(display, title, status);
     display.setFont(u8g2_font_6x10_tf);
-    drawCenteredText(display, 43, label);
+    drawCenteredText(display, 36, label);
     display.setFont(u8g2_font_logisoso16_tf);
-    drawCenteredText(display, 82, value);
+    drawCenteredText(display, 76, value);
 }
 
 static void drawDualMetricDisplay(U8G2 &display, const char *title, const char *status,
                                   const char *topLabel, const char *topValue,
                                   const char *bottomLabel, const char *bottomValue) {
     drawWindow(display, title, status);
-    display.drawHLine(8, 70, 112);
+    display.drawHLine(12, 66, 104);
     display.setFont(u8g2_font_6x10_tf);
-    drawCenteredText(display, 39, topLabel);
-    drawCenteredText(display, 87, bottomLabel);
+    drawCenteredText(display, 32, topLabel);
+    drawCenteredText(display, 82, bottomLabel);
     display.setFont(u8g2_font_logisoso16_tf);
-    drawCenteredText(display, 62, topValue);
-    drawCenteredText(display, 110, bottomValue);
+    drawCenteredText(display, 55, topValue);
+    drawCenteredText(display, 105, bottomValue);
 }
 
 static void drawTemperature(U8G2 &display, const TelemetryState &state) {
     char temperature[24];
     char heatIndex[24];
-    snprintf(temperature, sizeof(temperature), "%.1f C", state.weather.temperatureC);
-    snprintf(heatIndex, sizeof(heatIndex), "%.1f C", state.weather.heatIndexC);
-    drawDualMetricDisplay(display, "ENV TEMP", state.bme280Online ? "LIVE" : "SIM",
+    if (state.bme280Online) {
+        snprintf(temperature, sizeof(temperature), "%.1f C", state.weather.temperatureC);
+        snprintf(heatIndex, sizeof(heatIndex), "%.1f C", state.weather.heatIndexC);
+    } else {
+        snprintf(temperature, sizeof(temperature), "-- C");
+        snprintf(heatIndex, sizeof(heatIndex), "-- C");
+    }
+    drawDualMetricDisplay(display, "ENV TEMP", state.bme280Online ? "LIVE" : "OFFLINE",
                           "TEMPERATURE", temperature, "FEELS LIKE", heatIndex);
 }
 
 static void drawHumidity(U8G2 &display, const TelemetryState &state) {
     char value[24];
-    snprintf(value, sizeof(value), "%.1f %%", state.weather.humidityPct);
-    drawSingleMetricDisplay(display, "ENV HUM", state.bme280Online ? "LIVE" : "SIM",
+    if (state.bme280Online) snprintf(value, sizeof(value), "%.1f %%", state.weather.humidityPct);
+    else snprintf(value, sizeof(value), "-- %%");
+    drawSingleMetricDisplay(display, "ENV HUM", state.bme280Online ? "LIVE" : "OFFLINE",
                             "HUMIDITY", value);
 }
 
 static void drawPressure(U8G2 &display, const TelemetryState &state) {
     char value[24];
-    snprintf(value, sizeof(value), "%.1f hPa", state.weather.pressureHpa);
-    drawSingleMetricDisplay(display, "ENV PRES", state.bme280Online ? "LIVE" : "SIM",
+    if (state.bme280Online) snprintf(value, sizeof(value), "%.1f hPa", state.weather.pressureHpa);
+    else snprintf(value, sizeof(value), "-- hPa");
+    drawSingleMetricDisplay(display, "ENV PRES", state.bme280Online ? "LIVE" : "OFFLINE",
                             "PRESSURE", value);
 }
 
@@ -148,14 +156,18 @@ static void drawForecast(U8G2 &display, const TelemetryState &state) {
     char outlook[24];
     char trend[24];
 
-    snprintf(outlook, sizeof(outlook), "%s", forecastDisplayLabel(state.forecast.code));
-    if (state.forecast.ready) {
+    if (!state.bme280Online) {
+        snprintf(outlook, sizeof(outlook), "--");
+        snprintf(trend, sizeof(trend), "--");
+    } else if (state.forecast.ready) {
+        snprintf(outlook, sizeof(outlook), "%s", forecastDisplayLabel(state.forecast.code));
         snprintf(trend, sizeof(trend), "%+.1f HPA", state.forecast.delta3hHpa);
     } else {
+        snprintf(outlook, sizeof(outlook), "%s", forecastDisplayLabel(state.forecast.code));
         snprintf(trend, sizeof(trend), "3H WAIT");
     }
 
-    drawDualMetricDisplay(display, "FORECAST", state.bme280Online ? "LIVE" : "SIM",
+    drawDualMetricDisplay(display, "FORECAST", state.bme280Online ? "LIVE" : "OFFLINE",
                           "OUTLOOK", outlook, "TREND", trend);
 }
 
@@ -253,6 +265,7 @@ static bool initDisplay(uint8_t index) {
     display.setI2CAddress(slot.i2cAddress << 1);
     if (!display.begin()) return false;
     display.setPowerSave(0);
+    display.setContrast(BoardConfig::kDisplayContrast);
     display.clearBuffer();
     display.sendBuffer();
     return true;
@@ -296,18 +309,23 @@ static void renderDisplaySlice(uint8_t index, const TelemetryState &snapshot) {
                BoardConfig::kDisplayIdleTimeoutMs > 0 &&
                runtime.hasRendered &&
                !runtime.powerSave &&
-               (uint32_t)(nowMs - runtime.lastActivityMs) >= BoardConfig::kDisplayIdleTimeoutMs) {
+               hasElapsedMs(nowMs, runtime.lastActivityMs, BoardConfig::kDisplayIdleTimeoutMs)) {
         gDisplays[index]->setPowerSave(1);
         runtime.powerSave = true;
     }
     giveMutex(gDisplayBusMutex);
 }
 
-static void renderDisplayFrame(const TelemetryState &snapshot) {
+static void renderDisplayMask(uint16_t mask, const TelemetryState &snapshot) {
     for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        if ((mask & (1U << i)) == 0) continue;
         renderDisplaySlice(i, snapshot);
         taskDelayMs(1);
     }
+}
+
+static void renderDisplayFrame(const TelemetryState &snapshot) {
+    renderDisplayMask(kDisplayMaskAll, snapshot);
 }
 
 static uint8_t countOnlineDisplays(const TelemetryState &snapshot) {

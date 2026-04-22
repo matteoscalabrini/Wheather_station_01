@@ -16,13 +16,16 @@ constexpr uint8_t kNumDisplays = 9;
 constexpr uint8_t kNumDisplayBuses = 5;
 constexpr uint8_t kSensorBusIndex = 5;
 constexpr uint16_t kSoftwareI2cDelayUs = 4;
-constexpr uint32_t kDisplayRefreshMs = BoardConfig::kDisplayRefreshMs;
-constexpr uint32_t kDisplaySliceMs =
-    (kDisplayRefreshMs + kNumDisplays - 1) / kNumDisplays;
+constexpr uint32_t kDisplayHeartbeatMs = BoardConfig::kDisplayHeartbeatMs;
 constexpr uint32_t kSensorSampleMs = BoardConfig::kSensorSampleMs;
 constexpr uint32_t kWindSampleMs = BoardConfig::kWindSampleMs;
 constexpr uint32_t kCommandPollMs = BoardConfig::kCommandPollMs;
 constexpr uint32_t kI2cMaintenanceMs = BoardConfig::kI2cMaintenanceMs;
+constexpr uint16_t kDisplayMaskAll = (1U << kNumDisplays) - 1U;
+constexpr uint16_t kDisplayMaskWeather = (1U << 0) | (1U << 1) | (1U << 2) | (1U << 3);
+constexpr uint16_t kDisplayMaskWind = (1U << 4) | (1U << 5);
+constexpr uint16_t kDisplayMaskSolar = (1U << 6);
+constexpr uint16_t kDisplayMaskBattery = (1U << 7) | (1U << 8);
 constexpr BaseType_t kDisplayTaskCore = 0;
 constexpr BaseType_t kWorkerTaskCore = 1;
 constexpr UBaseType_t kTaskPriority = 1;
@@ -41,6 +44,7 @@ extern TelemetryState gTelemetry;
 extern SemaphoreHandle_t gTelemetryMutex;
 extern SemaphoreHandle_t gDisplayBusMutex;
 extern SemaphoreHandle_t gSensorBusMutex;
+extern TaskHandle_t gDisplayTaskHandle;
 
 extern String gSerialLine;
 extern uint8_t gWindSpeedAddrActive;

@@ -1,4 +1,4 @@
-# T3 V1.6.1 SX1278 Weather Station
+# T3 V1.6.1 Weather Station
 
 This project is intentionally narrow:
 - one board target
@@ -44,10 +44,10 @@ Each bus with two displays uses the standard `0x3C`/`0x3D` address pair. Single-
 
 The firmware runs on top of Arduino's FreeRTOS support with four pinned tasks:
 
-- `display-task` on core 0 renders one OLED at a time on a fixed slice interval
+- `display-task` on core 0 sleeps until telemetry changes, then redraws only the affected OLEDs; a long heartbeat redraw keeps the panels fresh without a constant sweep
 - `sensor-task` on core 1 samples the BME280 and both INA219s
 - `comms-task` on core 1 handles RS485 polling and serial commands
-- `i2c-maint-task` on core 1 probes the display buses and sensor bus, marks missing devices offline, and reinitializes them when they return
+- `i2c-maint-task` on core 1 retries offline sensors, and probes display presence on a long cadence instead of continuously scanning healthy buses
 
 Sensor values are shared through a mutex-protected telemetry snapshot so display refresh, reconnect logic, and sensor polling do not trample each other.
 
@@ -56,15 +56,19 @@ Sensor values are shared through a mutex-protected telemetry snapshot so display
 Battery-saver mode is enabled by default in `include/board_config.h` via `kEnableBatterySaver`.
 
 Current battery-saver timings:
-- display sweep: `5000 ms` across all 9 OLEDs
-- sensor sampling: `10000 ms`
-- wind polling: `2000 ms`
-- serial command polling: `100 ms`
-- I2C reconnect / maintenance: `15000 ms`
+- CPU clock: `80 MHz`
+- display redraw heartbeat: `60000 ms`
+- healthy display presence probe: `300000 ms`
+- offline display retry: `60000 ms`
+- sensor sampling: `15000 ms`
+- wind polling: `3000 ms`
+- serial command polling: `250 ms`
+- sensor/display maintenance pass: `60000 ms`
 
 Display behavior in this profile:
 - OLEDs redraw only when their value changed by a meaningful threshold
-- OLEDs stay on continuously; the firmware just avoids unnecessary redraw traffic
+- OLEDs stay on continuously, but run at a lower contrast and with reduced on-screen chrome to cut panel current
+- each refresh wakes only the affected displays instead of sweeping all 9 panels
 
 Thresholds are configurable in `include/board_config.h` for temperature, humidity, pressure, wind, power, voltage, and battery percentage.
 
@@ -94,7 +98,7 @@ Data split:
 ### BME280
 
 On dedicated hardware sensor bus 5. Addresses probed: `0x76` (primary), `0x77` (secondary).
-Sampling: normal mode, ×1 oversampling, filter off, 1000 ms standby.
+Sampling: forced mode, ×1 oversampling, filter off. The sensor sleeps between reads and wakes only for each sample.
 Derived values: dew point, heat index, and a fixed-altitude 3-hour pressure-trend forecast.
 The forecast screen replaces the old dew-point screen and becomes meaningful after roughly 3 hours of pressure history.
 If the BME280 disappears and comes back, the maintenance task reprobes the bus and re-runs driver initialization automatically.
@@ -105,6 +109,7 @@ Both on dedicated hardware sensor bus 5 (no display traffic):
 - **#1** at `0x44` — solar power monitor
 - **#2** at `0x40` — battery power monitor
 - Reads: bus voltage, shunt voltage, current, power
+- Each INA219 is put into power-save mode between samples
 - Battery percentage is derived from INA219 #2 load voltage with a configurable linear mapping in `include/board_config.h`
 - If an INA219 drops off the bus, it is marked offline and retried automatically by the maintenance task
 
@@ -160,7 +165,8 @@ Libraries:
 ## Known Constraints
 
 - Display buses 0–4 are software I2C, so display refresh is slower than a pure hardware-I2C design.
-- I2C reconnect is periodic, not instantaneous. In the current battery-saver profile, lost displays and lost sensors are reprobed every `15000 ms`.
+- Display disconnect detection is intentionally slow in the current battery-saver profile. Healthy panels are reprobed every `300000 ms`, while offline panels are retried every `60000 ms`.
+- Sensor reconnect is periodic, not instantaneous. In the current battery-saver profile, offline sensors are retried every `60000 ms`.
 - Battery percentage is only as accurate as the configured empty/full voltage thresholds in `include/board_config.h`.
 - `GPIO16`/`GPIO17` are used for RS485 UART only — no longer shared with I2C bus 3 (bus 3 now uses GPIO 5/18).
 - Some third-party 128×128 OLED modules marked as 3.3 V behave more reliably from 5 V.

@@ -67,13 +67,17 @@ static constexpr float kBatteryPercentFullVoltageV  = 16.80f;
 // are only redrawn on meaningful changes, and OLEDs enter power-save mode
 // after extended inactivity.
 static constexpr bool     kEnableBatterySaver            = true;
+static constexpr uint32_t kCpuFrequencyMhz               = kEnableBatterySaver ? 80UL : 240UL;
 static constexpr bool     kDisplayRedrawOnChangeOnly     = kEnableBatterySaver;
 static constexpr bool     kDisplayUsePowerSave           = false;
-static constexpr uint32_t kDisplayRefreshMs              = kEnableBatterySaver ? 5000UL : 750UL;
-static constexpr uint32_t kSensorSampleMs                = kEnableBatterySaver ? 10000UL : 2000UL;
-static constexpr uint32_t kWindSampleMs                  = kEnableBatterySaver ? 2000UL : 1000UL;
-static constexpr uint32_t kCommandPollMs                 = kEnableBatterySaver ? 100UL : 20UL;
-static constexpr uint32_t kI2cMaintenanceMs              = kEnableBatterySaver ? 15000UL : 3000UL;
+static constexpr uint8_t  kDisplayContrast               = kEnableBatterySaver ? 96U : 255U;
+static constexpr uint32_t kDisplayHeartbeatMs            = kEnableBatterySaver ? 60000UL : 5000UL;
+static constexpr uint32_t kDisplayOnlineProbeMs          = kEnableBatterySaver ? 5UL * 60UL * 1000UL : 30000UL;
+static constexpr uint32_t kDisplayOfflineRetryMs         = kEnableBatterySaver ? 60000UL : 3000UL;
+static constexpr uint32_t kSensorSampleMs                = kEnableBatterySaver ? 15000UL : 2000UL;
+static constexpr uint32_t kWindSampleMs                  = kEnableBatterySaver ? 3000UL : 1000UL;
+static constexpr uint32_t kCommandPollMs                 = kEnableBatterySaver ? 250UL : 20UL;
+static constexpr uint32_t kI2cMaintenanceMs              = kEnableBatterySaver ? 60000UL : 3000UL;
 static constexpr uint32_t kDisplayIdleTimeoutMs          = 0UL;
 static constexpr float    kDisplayTempDeltaC             = 0.3f;
 static constexpr float    kDisplayHumidityDeltaPct       = 1.0f;
@@ -84,6 +88,7 @@ static constexpr float    kDisplayWindAngleDeltaDeg      = 15.0f;
 static constexpr float    kDisplayPowerDeltaW            = 0.5f;
 static constexpr float    kDisplayVoltageDeltaV          = 0.1f;
 static constexpr float    kDisplayBatteryPercentDeltaPct = 2.0f;
+static constexpr uint32_t kIna219WakeMs                  = 3UL;
 
 // ─── Forecast Profile ────────────────────────────────────────────────────────
 // Fixed-altitude short-term outlook using pressure trend history from the
@@ -110,6 +115,7 @@ static constexpr bool     kRs485UseDeControl = false;
 static constexpr uint32_t kModbusBaud        = 9600;
 static constexpr bool     kRs485Invert       = false;
 static constexpr bool     kRs485AutoDetectInvert = true;
+static constexpr uint32_t kRs485InterQueryGapMs = 25UL;
 static constexpr uint8_t  kWindSpeedAddr     = 0x03;
 static constexpr uint8_t  kWindDirAddr       = 0x04;
 static constexpr float    kWindRelativeFrontOffsetDeg = 0.0f;

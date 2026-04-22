@@ -3,13 +3,14 @@ static void sensorTask(void *parameter) {
     TickType_t lastWake = xTaskGetTickCount();
 
     for (;;) {
-        WeatherSample weather = {};
+        WeatherSample weather = invalidWeatherSample();
         ForecastState forecast = {ForecastCode::Waiting, 0.0f, false};
-        PowerSample solar = {};
-        PowerSample battery = {};
+        PowerSample solar = invalidPowerSample();
+        PowerSample battery = invalidPowerSample();
         bool bmeOnline = false;
         bool solarOnline = false;
         bool batteryOnline = false;
+        uint8_t bmeAddress = 0;
 
         takeMutex(gSensorBusMutex);
         takeMutex(gTelemetryMutex);
@@ -20,21 +21,39 @@ static void sensorTask(void *parameter) {
         bmeOnline = gTelemetry.bme280Online;
         solarOnline = gTelemetry.solarOnline;
         batteryOnline = gTelemetry.batteryOnline;
+        bmeAddress = gTelemetry.bme280Address;
         giveMutex(gTelemetryMutex);
 
         if (bmeOnline) {
-            weather = readWeatherSample();
-            const uint32_t nowMs = millis();
-            recordForecastHistory(weather, nowMs);
-            forecast = computeForecast(weather, nowMs);
+            const WeatherSample measured = readWeatherSample();
+            if (isWeatherSampleValid(measured)) {
+                weather = measured;
+                const uint32_t nowMs = millis();
+                recordForecastHistory(weather, nowMs);
+                forecast = computeForecast(weather, nowMs);
+            } else {
+                bmeOnline = false;
+                forecast = {ForecastCode::Waiting, 0.0f, false};
+            }
         }
-        if (solarOnline) solar = readPower(gIna219Solar);
-        if (batteryOnline) battery = readPower(gIna219Battery);
+
+        if (solarOnline) {
+            const PowerSample measured = readPower(gIna219Solar);
+            if (isPowerSampleValid(measured)) solar = measured;
+            else solarOnline = false;
+        }
+
+        if (batteryOnline) {
+            const PowerSample measured = readPower(gIna219Battery);
+            if (isPowerSampleValid(measured)) battery = measured;
+            else batteryOnline = false;
+        }
 
         const float batteryPercent = batteryOnline ?
             computeBatteryPercent(battery.loadVoltageV) : -1.0f;
 
-        updateSensorSamples(weather, forecast, solar, battery, batteryPercent);
+        updateSensorSamples(weather, bmeOnline, bmeAddress, forecast, solar, solarOnline,
+                            battery, batteryOnline, batteryPercent);
         giveMutex(gSensorBusMutex);
 
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(kSensorSampleMs));
@@ -72,11 +91,18 @@ static void commsTask(void *parameter) {
 
 static void displayTask(void *parameter) {
     (void)parameter;
-    uint8_t displayIndex = 0;
+    uint32_t pendingMask = kDisplayMaskAll;
 
     for (;;) {
-        renderDisplaySlice(displayIndex, copyTelemetry());
-        displayIndex = (uint8_t)((displayIndex + 1) % kNumDisplays);
-        taskDelayMs(kDisplaySliceMs);
+        if (pendingMask == 0) {
+            if (xTaskNotifyWait(0, UINT32_MAX, &pendingMask,
+                                pdMS_TO_TICKS(kDisplayHeartbeatMs)) != pdPASS) {
+                pendingMask = kDisplayMaskAll;
+            }
+        }
+
+        const TelemetryState snapshot = copyTelemetry();
+        renderDisplayMask((uint16_t)pendingMask, snapshot);
+        pendingMask = 0;
     }
 }

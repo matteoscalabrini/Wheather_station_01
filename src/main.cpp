@@ -40,6 +40,7 @@ TelemetryState gTelemetry = {
 SemaphoreHandle_t gTelemetryMutex = nullptr;
 SemaphoreHandle_t gDisplayBusMutex = nullptr;
 SemaphoreHandle_t gSensorBusMutex = nullptr;
+TaskHandle_t gDisplayTaskHandle = nullptr;
 
 String gSerialLine;
 uint8_t gWindSpeedAddrActive = BoardConfig::kWindSpeedAddr;
@@ -83,6 +84,13 @@ uint32_t gForecastLastSampleMs = 0;
 
 void setup() {
     Serial.begin(115200);
+    if (getCpuFrequencyMhz() != BoardConfig::kCpuFrequencyMhz) {
+        if (!setCpuFrequencyMhz(BoardConfig::kCpuFrequencyMhz)) {
+            Serial.printf("CPU frequency request %lu MHz rejected; keeping %lu MHz\n",
+                (unsigned long)BoardConfig::kCpuFrequencyMhz,
+                (unsigned long)getCpuFrequencyMhz());
+        }
+    }
     taskDelayMs(250);
 
     gTelemetryMutex = xSemaphoreCreateMutex();
@@ -147,7 +155,7 @@ void setup() {
     xTaskCreatePinnedToCore(maintenanceTask, "i2c-maint-task", kMaintenanceTaskStack,
         nullptr, kTaskPriority, nullptr, kWorkerTaskCore);
     xTaskCreatePinnedToCore(displayTask, "display-task", kDisplayTaskStack,
-        nullptr, kTaskPriority, nullptr, kDisplayTaskCore);
+        nullptr, kTaskPriority, &gDisplayTaskHandle, kDisplayTaskCore);
 }
 
 void loop() {

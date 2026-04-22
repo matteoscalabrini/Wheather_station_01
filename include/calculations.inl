@@ -10,6 +10,35 @@ static void giveMutex(SemaphoreHandle_t mutex) {
     if (mutex != nullptr) xSemaphoreGive(mutex);
 }
 
+static bool hasElapsedMs(uint32_t nowMs, uint32_t sinceMs, uint32_t intervalMs) {
+    return intervalMs == 0 || sinceMs == 0 || (uint32_t)(nowMs - sinceMs) >= intervalMs;
+}
+
+static void requestDisplayRefresh(uint32_t mask) {
+    if (mask == 0 || gDisplayTaskHandle == nullptr) return;
+    xTaskNotify(gDisplayTaskHandle, mask, eSetBits);
+}
+
+static WeatherSample invalidWeatherSample() {
+    return {NAN, NAN, NAN, NAN, NAN};
+}
+
+static PowerSample invalidPowerSample() {
+    return {NAN, NAN, NAN, NAN, NAN};
+}
+
+static bool isWeatherSampleValid(const WeatherSample &sample) {
+    return isfinite(sample.temperatureC) && isfinite(sample.humidityPct) &&
+        isfinite(sample.pressureHpa) && isfinite(sample.dewPointC) &&
+        isfinite(sample.heatIndexC);
+}
+
+static bool isPowerSampleValid(const PowerSample &sample) {
+    return isfinite(sample.shuntVoltageMv) && isfinite(sample.busVoltageV) &&
+        isfinite(sample.loadVoltageV) && isfinite(sample.currentMa) &&
+        isfinite(sample.powerW);
+}
+
 static float clampPercent(float value) {
     if (value < 0.0f) return 0.0f;
     if (value > 100.0f) return 100.0f;
@@ -101,8 +130,8 @@ static ForecastState classifyForecast(float delta3hHpa, const WeatherSample &wea
 }
 
 static void recordForecastHistory(const WeatherSample &weather, uint32_t nowMs) {
-    if (gForecastLastSampleMs != 0 &&
-        (uint32_t)(nowMs - gForecastLastSampleMs) < BoardConfig::kForecastSampleMs) {
+    if (!isWeatherSampleValid(weather)) return;
+    if (!hasElapsedMs(nowMs, gForecastLastSampleMs, BoardConfig::kForecastSampleMs)) {
         return;
     }
 
@@ -112,26 +141,30 @@ static void recordForecastHistory(const WeatherSample &weather, uint32_t nowMs) 
     gForecastLastSampleMs = nowMs;
 }
 
-static bool findForecastReferencePoint(uint32_t targetMs, ForecastHistoryPoint &point) {
+static bool findForecastReferencePoint(uint32_t nowMs, ForecastHistoryPoint &point) {
     bool found = false;
+    uint32_t bestAgeMs = 0;
+
     for (size_t i = 0; i < gForecastHistoryCount; ++i) {
         const ForecastHistoryPoint &candidate = gForecastHistory[i];
-        if (candidate.timestampMs > targetMs) continue;
-        if (!found || candidate.timestampMs > point.timestampMs) {
+        const uint32_t ageMs = (uint32_t)(nowMs - candidate.timestampMs);
+        if (ageMs < BoardConfig::kForecastLookbackMs) continue;
+        if (!found || ageMs < bestAgeMs) {
             point = candidate;
+            bestAgeMs = ageMs;
             found = true;
         }
     }
+
     return found;
 }
 
 static ForecastState computeForecast(const WeatherSample &weather, uint32_t nowMs) {
     ForecastState forecast = {ForecastCode::Waiting, 0.0f, false};
-    if (nowMs < BoardConfig::kForecastLookbackMs) return forecast;
+    if (!isWeatherSampleValid(weather)) return forecast;
 
     ForecastHistoryPoint reference = {};
-    const uint32_t targetMs = nowMs - BoardConfig::kForecastLookbackMs;
-    if (!findForecastReferencePoint(targetMs, reference)) return forecast;
+    if (!findForecastReferencePoint(nowMs, reference)) return forecast;
 
     return classifyForecast(weather.pressureHpa - reference.pressureHpa, weather);
 }
@@ -186,44 +219,158 @@ static TelemetryState copyTelemetry() {
     return snapshot;
 }
 
+static uint16_t weatherDisplayMaskForChange(const TelemetryState &previous,
+                                            const WeatherSample &weather,
+                                            bool online,
+                                            uint8_t address,
+                                            const ForecastState &forecast) {
+    uint16_t mask = 0;
+
+    if (online != previous.bme280Online ||
+        address != previous.bme280Address ||
+        floatDelta(weather.temperatureC, previous.weather.temperatureC) >= BoardConfig::kDisplayTempDeltaC ||
+        floatDelta(weather.heatIndexC, previous.weather.heatIndexC) >= BoardConfig::kDisplayTempDeltaC) {
+        mask |= (1U << 0);
+    }
+
+    if (online != previous.bme280Online ||
+        floatDelta(weather.humidityPct, previous.weather.humidityPct) >= BoardConfig::kDisplayHumidityDeltaPct) {
+        mask |= (1U << 1);
+    }
+
+    if (online != previous.bme280Online ||
+        floatDelta(weather.pressureHpa, previous.weather.pressureHpa) >= BoardConfig::kDisplayPressureDeltaHpa) {
+        mask |= (1U << 2);
+    }
+
+    if (online != previous.bme280Online ||
+        forecast.ready != previous.forecast.ready ||
+        forecast.code != previous.forecast.code ||
+        floatDelta(forecast.delta3hHpa, previous.forecast.delta3hHpa) >= BoardConfig::kDisplayPressureDeltaHpa) {
+        mask |= (1U << 3);
+    }
+
+    return mask;
+}
+
+static uint16_t powerDisplayMaskForChange(const TelemetryState &previous,
+                                          const PowerSample &solar,
+                                          bool solarOnline,
+                                          const PowerSample &battery,
+                                          bool batteryOnline,
+                                          float batteryPercent) {
+    uint16_t mask = 0;
+
+    if (solarOnline != previous.solarOnline ||
+        floatDelta(solar.powerW, previous.solar.powerW) >= BoardConfig::kDisplayPowerDeltaW ||
+        floatDelta(solar.loadVoltageV, previous.solar.loadVoltageV) >= BoardConfig::kDisplayVoltageDeltaV) {
+        mask |= (1U << 6);
+    }
+
+    if (batteryOnline != previous.batteryOnline ||
+        floatDelta(battery.powerW, previous.battery.powerW) >= BoardConfig::kDisplayPowerDeltaW ||
+        floatDelta(battery.loadVoltageV, previous.battery.loadVoltageV) >= BoardConfig::kDisplayVoltageDeltaV) {
+        mask |= (1U << 7);
+    }
+
+    if (batteryOnline != previous.batteryOnline ||
+        floatDelta(batteryPercent, previous.batteryPercent) >= BoardConfig::kDisplayBatteryPercentDeltaPct ||
+        floatDelta(battery.loadVoltageV, previous.battery.loadVoltageV) >= BoardConfig::kDisplayVoltageDeltaV) {
+        mask |= (1U << 8);
+    }
+
+    return mask;
+}
+
+static uint16_t windDisplayMaskForChange(const TelemetryState &previous,
+                                         const WindSample &wind,
+                                         bool speedOnline,
+                                         bool dirOnline) {
+    uint16_t mask = 0;
+
+    if (speedOnline != previous.windSpeedOnline ||
+        wind.beaufort != previous.wind.beaufort ||
+        floatDelta(wind.speedMs, previous.wind.speedMs) >= BoardConfig::kDisplayWindSpeedDeltaMs) {
+        mask |= (1U << 4);
+    }
+
+    if (dirOnline != previous.windDirOnline ||
+        circularAngleDelta(normalizeRelativeWindDeg(wind.directionDeg),
+                           normalizeRelativeWindDeg(previous.wind.directionDeg)) >=
+            BoardConfig::kDisplayWindAngleDeltaDeg ||
+        strcmp(windRelativeLabel(wind.directionDeg),
+               windRelativeLabel(previous.wind.directionDeg)) != 0) {
+        mask |= (1U << 5);
+    }
+
+    return mask;
+}
+
 static void updateWeatherTelemetry(const WeatherSample &weather, bool online, uint8_t address) {
+    uint16_t refreshMask = 0;
     takeMutex(gTelemetryMutex);
+    const TelemetryState previous = gTelemetry;
     gTelemetry.weather = weather;
     gTelemetry.bme280Online = online;
     gTelemetry.bme280Address = address;
+    refreshMask = weatherDisplayMaskForChange(previous, weather, online, address, previous.forecast);
     giveMutex(gTelemetryMutex);
+    requestDisplayRefresh(refreshMask);
 }
 
 static void updatePowerTelemetry(const PowerSample &solar, bool solarOnline,
                                  const PowerSample &battery, bool batteryOnline,
                                  float batteryPercent) {
+    uint16_t refreshMask = 0;
     takeMutex(gTelemetryMutex);
+    const TelemetryState previous = gTelemetry;
     gTelemetry.solar = solar;
     gTelemetry.solarOnline = solarOnline;
     gTelemetry.battery = battery;
     gTelemetry.batteryOnline = batteryOnline;
     gTelemetry.batteryPercent = batteryPercent;
+    refreshMask = powerDisplayMaskForChange(previous, solar, solarOnline, battery,
+                                            batteryOnline, batteryPercent);
     giveMutex(gTelemetryMutex);
+    requestDisplayRefresh(refreshMask);
 }
 
 static void updateWindTelemetry(const WindSample &wind, bool speedOnline, bool dirOnline) {
+    uint16_t refreshMask = 0;
     takeMutex(gTelemetryMutex);
+    const TelemetryState previous = gTelemetry;
     gTelemetry.wind = wind;
     gTelemetry.windSpeedOnline = speedOnline;
     gTelemetry.windDirOnline = dirOnline;
+    refreshMask = windDisplayMaskForChange(previous, wind, speedOnline, dirOnline);
     giveMutex(gTelemetryMutex);
+    requestDisplayRefresh(refreshMask);
 }
 
 static void updateSensorSamples(const WeatherSample &weather,
+                                bool bmeOnline,
+                                uint8_t bmeAddress,
                                 const ForecastState &forecast,
                                 const PowerSample &solar,
+                                bool solarOnline,
                                 const PowerSample &battery,
+                                bool batteryOnline,
                                 float batteryPercent) {
+    uint16_t refreshMask = 0;
     takeMutex(gTelemetryMutex);
+    const TelemetryState previous = gTelemetry;
     gTelemetry.weather = weather;
+    gTelemetry.bme280Online = bmeOnline;
+    gTelemetry.bme280Address = bmeAddress;
     gTelemetry.forecast = forecast;
     gTelemetry.solar = solar;
+    gTelemetry.solarOnline = solarOnline;
     gTelemetry.battery = battery;
+    gTelemetry.batteryOnline = batteryOnline;
     gTelemetry.batteryPercent = batteryPercent;
+    refreshMask = weatherDisplayMaskForChange(previous, weather, bmeOnline, bmeAddress, forecast) |
+        powerDisplayMaskForChange(previous, solar, solarOnline, battery, batteryOnline,
+                                  batteryPercent);
     giveMutex(gTelemetryMutex);
+    requestDisplayRefresh(refreshMask);
 }
