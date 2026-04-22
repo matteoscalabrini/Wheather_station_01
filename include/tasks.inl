@@ -56,6 +56,7 @@ static void sensorTask(void *parameter) {
                             battery, batteryOnline, batteryPercent);
         giveMutex(gSensorBusMutex);
 
+        esp_task_wdt_reset();
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(kSensorSampleMs));
     }
 }
@@ -66,6 +67,7 @@ static void maintenanceTask(void *parameter) {
     for (;;) {
         maintainDisplayConnections();
         maintainSensorConnections();
+        esp_task_wdt_reset();
         taskDelayMs(kI2cMaintenanceMs);
     }
 }
@@ -85,6 +87,7 @@ static void commsTask(void *parameter) {
             lastWindWake = xTaskGetTickCount();
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(kCommandPollMs));
     }
 }
@@ -104,5 +107,6 @@ static void displayTask(void *parameter) {
         const TelemetryState snapshot = copyTelemetry();
         renderDisplayMask((uint16_t)pendingMask, snapshot);
         pendingMask = 0;
+        esp_task_wdt_reset();
     }
 }

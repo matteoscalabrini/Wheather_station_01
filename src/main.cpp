@@ -2,6 +2,7 @@
 #include <string.h>
 
 #include "app_state.h"
+#include <esp_task_wdt.h>
 
 const DisplaySlot kDisplaySlots[kNumDisplays] = {
     {0, BoardConfig::kDisplay0Address}, {0, BoardConfig::kDisplay1Address},
@@ -41,6 +42,9 @@ SemaphoreHandle_t gTelemetryMutex = nullptr;
 SemaphoreHandle_t gDisplayBusMutex = nullptr;
 SemaphoreHandle_t gSensorBusMutex = nullptr;
 TaskHandle_t gDisplayTaskHandle = nullptr;
+TaskHandle_t gSensorTaskHandle = nullptr;
+TaskHandle_t gCommsTaskHandle = nullptr;
+TaskHandle_t gMaintenanceTaskHandle = nullptr;
 
 String gSerialLine;
 uint8_t gWindSpeedAddrActive = BoardConfig::kWindSpeedAddr;
@@ -149,13 +153,25 @@ void setup() {
     }
 
     xTaskCreatePinnedToCore(sensorTask, "sensor-task", kSensorTaskStack,
-        nullptr, kTaskPriority, nullptr, kWorkerTaskCore);
+        nullptr, kTaskPriority, &gSensorTaskHandle, kWorkerTaskCore);
     xTaskCreatePinnedToCore(commsTask, "comms-task", kCommsTaskStack,
-        nullptr, kTaskPriority, nullptr, kWorkerTaskCore);
+        nullptr, kTaskPriority, &gCommsTaskHandle, kWorkerTaskCore);
     xTaskCreatePinnedToCore(maintenanceTask, "i2c-maint-task", kMaintenanceTaskStack,
-        nullptr, kTaskPriority, nullptr, kWorkerTaskCore);
+        nullptr, kTaskPriority, &gMaintenanceTaskHandle, kWorkerTaskCore);
     xTaskCreatePinnedToCore(displayTask, "display-task", kDisplayTaskStack,
         nullptr, kTaskPriority, &gDisplayTaskHandle, kDisplayTaskCore);
+
+    {
+        if (esp_task_wdt_init(30000, false) == ESP_OK) {
+            esp_task_wdt_add(gSensorTaskHandle);
+            esp_task_wdt_add(gCommsTaskHandle);
+            esp_task_wdt_add(gMaintenanceTaskHandle);
+            esp_task_wdt_add(gDisplayTaskHandle);
+            Serial.println("Watchdog initialized");
+        } else {
+            Serial.println("Watchdog init failed");
+        }
+    }
 }
 
 void loop() {

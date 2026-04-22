@@ -45,6 +45,9 @@ extern SemaphoreHandle_t gTelemetryMutex;
 extern SemaphoreHandle_t gDisplayBusMutex;
 extern SemaphoreHandle_t gSensorBusMutex;
 extern TaskHandle_t gDisplayTaskHandle;
+extern TaskHandle_t gSensorTaskHandle;
+extern TaskHandle_t gCommsTaskHandle;
+extern TaskHandle_t gMaintenanceTaskHandle;
 
 extern String gSerialLine;
 extern uint8_t gWindSpeedAddrActive;
