@@ -35,6 +35,13 @@ enum class ForecastCode : uint8_t {
     StormWatch,
 };
 
+enum class SolarLightMode : uint8_t {
+    Unknown,
+    Dark,
+    Shadow,
+    Sun,
+};
+
 struct ForecastState {
     ForecastCode code;
     float delta3hHpa;

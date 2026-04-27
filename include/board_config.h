@@ -78,6 +78,7 @@ static constexpr uint32_t kSensorSampleMs                = kEnableBatterySaver ?
 static constexpr uint32_t kWindSampleMs                  = kEnableBatterySaver ? 3000UL : 1000UL;
 static constexpr uint32_t kCommandPollMs                 = kEnableBatterySaver ? 250UL : 20UL;
 static constexpr uint32_t kI2cMaintenanceMs              = kEnableBatterySaver ? 60000UL : 3000UL;
+static constexpr uint32_t kTaskWatchdogTimeoutS          = 120UL;
 static constexpr uint32_t kDisplayIdleTimeoutMs          = 0UL;
 static constexpr float    kDisplayTempDeltaC             = 0.3f;
 static constexpr float    kDisplayHumidityDeltaPct       = 1.0f;
@@ -89,6 +90,37 @@ static constexpr float    kDisplayPowerDeltaW            = 0.5f;
 static constexpr float    kDisplayVoltageDeltaV          = 0.1f;
 static constexpr float    kDisplayBatteryPercentDeltaPct = 2.0f;
 static constexpr uint32_t kIna219WakeMs                  = 3UL;
+
+// Solar-voltage power policy.
+// INA219 #1 load voltage and power are used as the light/charge proxy:
+//   sun    >= kSolarSunEnterVoltageV and > kSolarSunMinPowerW
+//   shadow between the dark and sun bands
+//   dark   <= kSolarDarkEnterVoltageV
+// Exit thresholds add hysteresis so clouds and sunrise/sunset edges do not
+// rapidly bounce between modes.
+static constexpr bool     kEnableSolarPowerPolicy        = true;
+static constexpr float    kSolarSunEnterVoltageV         = 16.0f;
+static constexpr float    kSolarSunExitVoltageV          = 15.0f;
+static constexpr float    kSolarSunMinPowerW             = 3.0f;
+static constexpr float    kSolarDarkEnterVoltageV        = 10.0f;
+static constexpr float    kSolarDarkExitVoltageV         = 11.0f;
+static constexpr uint32_t kSolarDarkDeepSleepDelayMs     = 4UL * 60UL * 60UL * 1000UL;
+static constexpr uint32_t kSolarDeepSleepWakeMs          = 10UL * 60UL * 1000UL;
+static constexpr uint8_t  kDisplaySunContrast            = 255U;
+static constexpr uint8_t  kDisplayShadowContrast         = kDisplayContrast;
+static constexpr uint8_t  kDisplayDarkGraceContrast      = 48U;
+static constexpr uint32_t kSensorSampleSunMs             = 5000UL;
+static constexpr uint32_t kSensorSampleShadowMs          = kSensorSampleMs;
+static constexpr uint32_t kSensorSampleDarkMs            = 60000UL;
+static constexpr uint32_t kWindSampleSunMs               = 1000UL;
+static constexpr uint32_t kWindSampleShadowMs            = kWindSampleMs;
+static constexpr uint32_t kWindSampleDarkMs              = 60000UL;
+static constexpr uint32_t kDisplayHeartbeatSunMs         = 15000UL;
+static constexpr uint32_t kDisplayHeartbeatShadowMs      = kDisplayHeartbeatMs;
+static constexpr uint32_t kDisplayHeartbeatDarkMs        = 60000UL;
+static constexpr uint32_t kI2cMaintenanceSunMs           = 30000UL;
+static constexpr uint32_t kI2cMaintenanceShadowMs        = kI2cMaintenanceMs;
+static constexpr uint32_t kI2cMaintenanceDarkMs          = 60000UL;
 
 // ─── Forecast Profile ────────────────────────────────────────────────────────
 // Fixed-altitude short-term outlook using pressure trend history from the

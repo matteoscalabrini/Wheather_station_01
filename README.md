@@ -55,7 +55,16 @@ Sensor values are shared through a mutex-protected telemetry snapshot so display
 
 Battery-saver mode is enabled by default in `include/board_config.h` via `kEnableBatterySaver`.
 
-Current battery-saver timings:
+The solar-voltage power policy is also enabled by default via `kEnableSolarPowerPolicy`. INA219 #1 solar load voltage and power are used as the light/charge proxy:
+
+- `>= 16.0 V` and `> 3.0 W`: sun mode
+- `> 10.0 V` and `< 16.0 V`: shadow mode
+- `>= 16.0 V` with `<= 3.0 W`: shadow mode
+- `<= 10.0 V`: dark mode
+
+The mode uses voltage hysteresis before leaving sun or dark mode, so voltage noise near the thresholds does not rapidly flip the schedule.
+
+Shadow-mode battery-saver timings:
 - CPU clock: `80 MHz`
 - display redraw heartbeat: `60000 ms`
 - healthy display presence probe: `300000 ms`
@@ -65,12 +74,28 @@ Current battery-saver timings:
 - serial command polling: `250 ms`
 - sensor/display maintenance pass: `60000 ms`
 
+Sun-mode timing changes:
+- display contrast: `255`
+- display redraw heartbeat: `15000 ms`
+- sensor sampling: `5000 ms`
+- wind polling: `1000 ms`
+- sensor/display maintenance pass: `30000 ms`
+
+Dark-mode behavior:
+- display contrast is reduced during the initial dark grace period
+- sensor sampling, wind polling, display heartbeat, and maintenance slow to `60000 ms`
+- after `4 h` continuously in dark mode, all OLEDs are placed in power-save mode and the ESP32 enters deep sleep
+- deep sleep wake interval is `10 min`
+- on timer wake, the firmware reads INA219 #1 before initializing displays; if solar voltage is still dark, it immediately sleeps again
+- if solar voltage wakes into shadow or sun, normal display and polling behavior resumes
+- if INA219 #1 is offline or invalid, the firmware does not enter solar-triggered deep sleep
+
 Display behavior in this profile:
 - OLEDs redraw only when their value changed by a meaningful threshold
-- OLEDs stay on continuously, but run at a lower contrast and with reduced on-screen chrome to cut panel current
+- OLED brightness follows the solar mode: maximum in sun, reduced in shadow, lower during the dark grace period, then off in deep sleep
 - each refresh wakes only the affected displays instead of sweeping all 9 panels
 
-Thresholds are configurable in `include/board_config.h` for temperature, humidity, pressure, wind, power, voltage, and battery percentage.
+Thresholds are configurable in `include/board_config.h` for solar mode, sleep timing, temperature, humidity, pressure, wind, power, voltage, and battery percentage.
 
 ## Display Layout — 9 Screens
 

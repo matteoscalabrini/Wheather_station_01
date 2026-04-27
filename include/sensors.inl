@@ -142,11 +142,12 @@ static void maintainSensorConnections() {
     if (!batteryOnline && probeHardwareI2c(Wire, BoardConfig::kIna219_2_Address)) {
         batteryOnline = beginIna219OnBus(gIna219Battery, battery);
     }
+    giveMutex(gSensorBusMutex);
 
     const float batteryPercent = batteryOnline ?
         computeBatteryPercent(battery.loadVoltageV) : -1.0f;
 
     updateSensorSamples(weather, bmeOnline, bmeAddress, forecast, solar, solarOnline,
                         battery, batteryOnline, batteryPercent);
-    giveMutex(gSensorBusMutex);
+    updateSolarPowerPolicy(solar, solarOnline);
 }

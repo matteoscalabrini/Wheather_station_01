@@ -77,10 +77,15 @@ ForecastHistoryPoint gForecastHistory[kForecastHistoryCapacity] = {};
 size_t gForecastHistoryCount = 0;
 size_t gForecastHistoryNext = 0;
 uint32_t gForecastLastSampleMs = 0;
+SolarLightMode gSolarLightMode = SolarLightMode::Unknown;
+uint32_t gSolarDarkSinceMs = 0;
+bool gDisplaysForcedOff = false;
+bool gBootedFromTimerWake = false;
 
 #include "calculations.inl"
 #include "i2c_soft.inl"
 #include "display.inl"
+#include "power_policy.inl"
 #include "rs485.inl"
 #include "sensors.inl"
 #include "commands.inl"
@@ -100,11 +105,7 @@ void setup() {
     gTelemetryMutex = xSemaphoreCreateMutex();
     gDisplayBusMutex = xSemaphoreCreateMutex();
     gSensorBusMutex = xSemaphoreCreateMutex();
-
-    for (uint8_t i = 0; i < kNumDisplays; ++i) {
-        const bool online = initDisplay(i);
-        setDisplayOnline(i, online);
-    }
+    gBootedFromTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
 
     takeMutex(gSensorBusMutex);
     Wire.begin(BoardConfig::kI2c5Sda, BoardConfig::kI2c5Scl);
@@ -126,6 +127,14 @@ void setup() {
         }
     }
     giveMutex(gSensorBusMutex);
+
+    updateSolarPowerPolicy(gTelemetry.solar, gTelemetry.solarOnline);
+
+    for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        const bool online = initDisplay(i);
+        setDisplayOnline(i, online);
+    }
+    applyDisplayContrastForSolarMode(gSolarLightMode, true);
 
     if (gTelemetry.bme280Online) {
         const uint32_t nowMs = millis();
@@ -162,12 +171,11 @@ void setup() {
         nullptr, kTaskPriority, &gDisplayTaskHandle, kDisplayTaskCore);
 
     {
-        if (esp_task_wdt_init(30000, false) == ESP_OK) {
+        if (esp_task_wdt_init(BoardConfig::kTaskWatchdogTimeoutS, false) == ESP_OK) {
             esp_task_wdt_add(gSensorTaskHandle);
             esp_task_wdt_add(gCommsTaskHandle);
             esp_task_wdt_add(gMaintenanceTaskHandle);
             esp_task_wdt_add(gDisplayTaskHandle);
-            Serial.println("Watchdog initialized");
         } else {
             Serial.println("Watchdog init failed");
         }

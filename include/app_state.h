@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <U8g2lib.h>
 #include <Wire.h>
+#include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -67,5 +68,9 @@ extern ForecastHistoryPoint gForecastHistory[kForecastHistoryCapacity];
 extern size_t gForecastHistoryCount;
 extern size_t gForecastHistoryNext;
 extern uint32_t gForecastLastSampleMs;
+extern SolarLightMode gSolarLightMode;
+extern uint32_t gSolarDarkSinceMs;
+extern bool gDisplaysForcedOff;
+extern bool gBootedFromTimerWake;
 
 extern const DrawFunc kDrawFuncs[kNumDisplays];

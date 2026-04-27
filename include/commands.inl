@@ -50,6 +50,8 @@ static void printStatus() {
     Serial.printf("  solar ina219:  %s @ 0x%02X  power=%.2fW voltage=%.2fV\n",
         snapshot.solarOnline ? "online" : "offline", BoardConfig::kIna219_1_Address,
         snapshot.solar.powerW, snapshot.solar.loadVoltageV);
+    Serial.printf("  solar mode:    %s%s\n", solarLightModeLabel(gSolarLightMode),
+        gDisplaysForcedOff ? " displays-off" : "");
     Serial.printf("  battery ina219:%s @ 0x%02X  power=%.2fW voltage=%.2fV battery=%s\n",
         snapshot.batteryOnline ? "online" : "offline", BoardConfig::kIna219_2_Address,
         snapshot.battery.powerW, snapshot.battery.loadVoltageV,

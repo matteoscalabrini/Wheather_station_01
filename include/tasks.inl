@@ -56,8 +56,9 @@ static void sensorTask(void *parameter) {
                             battery, batteryOnline, batteryPercent);
         giveMutex(gSensorBusMutex);
 
+        updateSolarPowerPolicy(solar, solarOnline);
         esp_task_wdt_reset();
-        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(kSensorSampleMs));
+        vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(activeSensorSampleMs()));
     }
 }
 
@@ -68,7 +69,7 @@ static void maintenanceTask(void *parameter) {
         maintainDisplayConnections();
         maintainSensorConnections();
         esp_task_wdt_reset();
-        taskDelayMs(kI2cMaintenanceMs);
+        taskDelayMs(activeI2cMaintenanceMs());
     }
 }
 
@@ -79,7 +80,7 @@ static void commsTask(void *parameter) {
     for (;;) {
         readSerial();
 
-        if ((xTaskGetTickCount() - lastWindWake) >= pdMS_TO_TICKS(kWindSampleMs)) {
+        if ((xTaskGetTickCount() - lastWindWake) >= pdMS_TO_TICKS(activeWindSampleMs())) {
             bool speedOnline = false;
             bool dirOnline = false;
             const WindSample wind = pollWindSensors(speedOnline, dirOnline);
@@ -99,9 +100,15 @@ static void displayTask(void *parameter) {
     for (;;) {
         if (pendingMask == 0) {
             if (xTaskNotifyWait(0, UINT32_MAX, &pendingMask,
-                                pdMS_TO_TICKS(kDisplayHeartbeatMs)) != pdPASS) {
+                                pdMS_TO_TICKS(activeDisplayHeartbeatMs())) != pdPASS) {
                 pendingMask = kDisplayMaskAll;
             }
+        }
+
+        if (gDisplaysForcedOff) {
+            pendingMask = 0;
+            esp_task_wdt_reset();
+            continue;
         }
 
         const TelemetryState snapshot = copyTelemetry();
