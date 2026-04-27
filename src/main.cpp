@@ -45,6 +45,7 @@ TaskHandle_t gDisplayTaskHandle = nullptr;
 TaskHandle_t gSensorTaskHandle = nullptr;
 TaskHandle_t gCommsTaskHandle = nullptr;
 TaskHandle_t gMaintenanceTaskHandle = nullptr;
+TaskHandle_t gNetworkTaskHandle = nullptr;
 
 String gSerialLine;
 uint8_t gWindSpeedAddrActive = BoardConfig::kWindSpeedAddr;
@@ -81,14 +82,26 @@ SolarLightMode gSolarLightMode = SolarLightMode::Unknown;
 uint32_t gSolarDarkSinceMs = 0;
 bool gDisplaysForcedOff = false;
 bool gBootedFromTimerWake = false;
+bool gDarkWakePostOnly = false;
+bool gDarkWakePostDue = false;
+bool gDarkTimerWakeEvaluated = false;
+RTC_DATA_ATTR uint32_t gDarkTimerWakeCount = 0;
+RuntimeSettings gSettings = {};
+NetworkRuntimeState gNetworkRuntime = {};
+OtaUploadState gOtaUpload = {};
+WebServer gWebServer(80);
+DNSServer gDnsServer;
+Preferences gSettingsPrefs;
 
 #include "calculations.inl"
+#include "settings_runtime.inl"
 #include "i2c_soft.inl"
 #include "display.inl"
 #include "power_policy.inl"
 #include "rs485.inl"
 #include "sensors.inl"
 #include "commands.inl"
+#include "network_runtime.inl"
 #include "tasks.inl"
 
 void setup() {
@@ -106,6 +119,12 @@ void setup() {
     gDisplayBusMutex = xSemaphoreCreateMutex();
     gSensorBusMutex = xSemaphoreCreateMutex();
     gBootedFromTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+    loadRuntimeSettings();
+    if (!validRuntimeSettings()) {
+        Serial.println("Settings invalid; reverting to defaults");
+        loadDefaultRuntimeSettings();
+        saveRuntimeSettings();
+    }
 
     takeMutex(gSensorBusMutex);
     Wire.begin(BoardConfig::kI2c5Sda, BoardConfig::kI2c5Scl);
@@ -129,12 +148,15 @@ void setup() {
     giveMutex(gSensorBusMutex);
 
     updateSolarPowerPolicy(gTelemetry.solar, gTelemetry.solarOnline);
+    initializeNetworkRuntime();
 
-    for (uint8_t i = 0; i < kNumDisplays; ++i) {
-        const bool online = initDisplay(i);
-        setDisplayOnline(i, online);
+    if (!gDarkWakePostOnly) {
+        for (uint8_t i = 0; i < kNumDisplays; ++i) {
+            const bool online = initDisplay(i);
+            setDisplayOnline(i, online);
+        }
+        applyDisplayContrastForSolarMode(gSolarLightMode, true);
     }
-    applyDisplayContrastForSolarMode(gSolarLightMode, true);
 
     if (gTelemetry.bme280Online) {
         const uint32_t nowMs = millis();
@@ -142,40 +164,49 @@ void setup() {
         gTelemetry.forecast = computeForecast(gTelemetry.weather, nowMs);
     }
 
-    initRs485();
-    {
-        bool speedOnline = false;
-        bool dirOnline = false;
-        gTelemetry.wind = pollWindSensors(speedOnline, dirOnline);
-        gTelemetry.windSpeedOnline = speedOnline;
-        gTelemetry.windDirOnline = dirOnline;
+    if (!gDarkWakePostOnly) {
+        initRs485();
+        {
+            bool speedOnline = false;
+            bool dirOnline = false;
+            gTelemetry.wind = pollWindSensors(speedOnline, dirOnline);
+            gTelemetry.windSpeedOnline = speedOnline;
+            gTelemetry.windDirOnline = dirOnline;
+        }
     }
 
     Serial.printf("\n%s Weather Station\n", BoardConfig::kBoardName);
     Serial.printf("Sensor bus: SDA%d/SCL%d\n", BoardConfig::kI2c5Sda, BoardConfig::kI2c5Scl);
     printStatus();
     printHelp();
-    {
+    if (!gDarkWakePostOnly) {
         const TelemetryState snapshot = copyTelemetry();
         renderDisplayFrame(snapshot);
         primeDisplayRuntimeState(snapshot);
+    } else {
+        Serial.println("Dark timer wake: posting telemetry only, then returning to deep sleep");
     }
 
-    xTaskCreatePinnedToCore(sensorTask, "sensor-task", kSensorTaskStack,
-        nullptr, kTaskPriority, &gSensorTaskHandle, kWorkerTaskCore);
-    xTaskCreatePinnedToCore(commsTask, "comms-task", kCommsTaskStack,
-        nullptr, kTaskPriority, &gCommsTaskHandle, kWorkerTaskCore);
-    xTaskCreatePinnedToCore(maintenanceTask, "i2c-maint-task", kMaintenanceTaskStack,
-        nullptr, kTaskPriority, &gMaintenanceTaskHandle, kWorkerTaskCore);
-    xTaskCreatePinnedToCore(displayTask, "display-task", kDisplayTaskStack,
-        nullptr, kTaskPriority, &gDisplayTaskHandle, kDisplayTaskCore);
+    if (!gDarkWakePostOnly) {
+        xTaskCreatePinnedToCore(sensorTask, "sensor-task", kSensorTaskStack,
+            nullptr, kTaskPriority, &gSensorTaskHandle, kWorkerTaskCore);
+        xTaskCreatePinnedToCore(commsTask, "comms-task", kCommsTaskStack,
+            nullptr, kTaskPriority, &gCommsTaskHandle, kWorkerTaskCore);
+        xTaskCreatePinnedToCore(maintenanceTask, "i2c-maint-task", kMaintenanceTaskStack,
+            nullptr, kTaskPriority, &gMaintenanceTaskHandle, kWorkerTaskCore);
+        xTaskCreatePinnedToCore(displayTask, "display-task", kDisplayTaskStack,
+            nullptr, kTaskPriority, &gDisplayTaskHandle, kDisplayTaskCore);
+    }
+    xTaskCreatePinnedToCore(networkTask, "network-task", kNetworkTaskStack,
+        nullptr, kTaskPriority, &gNetworkTaskHandle, kWorkerTaskCore);
 
     {
         if (esp_task_wdt_init(BoardConfig::kTaskWatchdogTimeoutS, false) == ESP_OK) {
-            esp_task_wdt_add(gSensorTaskHandle);
-            esp_task_wdt_add(gCommsTaskHandle);
-            esp_task_wdt_add(gMaintenanceTaskHandle);
-            esp_task_wdt_add(gDisplayTaskHandle);
+            if (gSensorTaskHandle) esp_task_wdt_add(gSensorTaskHandle);
+            if (gCommsTaskHandle) esp_task_wdt_add(gCommsTaskHandle);
+            if (gMaintenanceTaskHandle) esp_task_wdt_add(gMaintenanceTaskHandle);
+            if (gDisplayTaskHandle) esp_task_wdt_add(gDisplayTaskHandle);
+            if (gNetworkTaskHandle) esp_task_wdt_add(gNetworkTaskHandle);
         } else {
             Serial.println("Watchdog init failed");
         }

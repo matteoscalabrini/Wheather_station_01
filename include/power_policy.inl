@@ -11,21 +11,21 @@ static const char *solarLightModeLabel(SolarLightMode mode) {
 static SolarLightMode classifySolarLightMode(float voltageV, float powerW,
                                              SolarLightMode previousMode) {
     if (!isfinite(voltageV) || !isfinite(powerW)) return SolarLightMode::Unknown;
-    const bool sunPowerAvailable = powerW > BoardConfig::kSolarSunMinPowerW;
+    const bool sunPowerAvailable = powerW > gSettings.solarSunMinPowerW;
 
     if (previousMode == SolarLightMode::Sun &&
-        voltageV >= BoardConfig::kSolarSunExitVoltageV &&
+        voltageV >= gSettings.solarSunExitVoltageV &&
         sunPowerAvailable) {
         return SolarLightMode::Sun;
     }
 
     if (previousMode == SolarLightMode::Dark &&
-        voltageV <= BoardConfig::kSolarDarkExitVoltageV) {
+        voltageV <= gSettings.solarDarkExitVoltageV) {
         return SolarLightMode::Dark;
     }
 
-    if (voltageV <= BoardConfig::kSolarDarkEnterVoltageV) return SolarLightMode::Dark;
-    if (voltageV >= BoardConfig::kSolarSunEnterVoltageV && sunPowerAvailable) {
+    if (voltageV <= gSettings.solarDarkEnterVoltageV) return SolarLightMode::Dark;
+    if (voltageV >= gSettings.solarSunEnterVoltageV && sunPowerAvailable) {
         return SolarLightMode::Sun;
     }
     return SolarLightMode::Shadow;
@@ -125,12 +125,19 @@ static void enterSolarDeepSleep() {
     gDisplaysForcedOff = true;
     setAllDisplaysPowerSave(true);
 
-    const uint64_t wakeUs = (uint64_t)BoardConfig::kSolarDeepSleepWakeMs * 1000ULL;
+    const uint64_t wakeUs = (uint64_t)gSettings.solarDeepSleepWakeMs * 1000ULL;
     esp_sleep_enable_timer_wakeup(wakeUs);
     Serial.printf("Solar mode dark: entering deep sleep for %lu ms\n",
-        (unsigned long)BoardConfig::kSolarDeepSleepWakeMs);
+        (unsigned long)gSettings.solarDeepSleepWakeMs);
     Serial.flush();
     esp_deep_sleep_start();
+}
+
+static uint32_t darkWakePostEveryWakeCount() {
+    if (gSettings.solarDeepSleepWakeMs == 0) return 1;
+    uint32_t wakeCount = gSettings.serverPostDarkMs / gSettings.solarDeepSleepWakeMs;
+    if ((gSettings.serverPostDarkMs % gSettings.solarDeepSleepWakeMs) != 0) ++wakeCount;
+    return wakeCount == 0 ? 1 : wakeCount;
 }
 
 static void updateSolarPowerPolicy(const PowerSample &solar, bool solarOnline) {
@@ -165,6 +172,10 @@ static void updateSolarPowerPolicy(const PowerSample &solar, bool solarOnline) {
     if (nextMode != SolarLightMode::Dark) {
         gSolarDarkSinceMs = 0;
         gBootedFromTimerWake = false;
+        gDarkTimerWakeCount = 0;
+        gDarkWakePostOnly = false;
+        gDarkWakePostDue = false;
+        gDarkTimerWakeEvaluated = false;
         if (gDisplaysForcedOff) {
             gDisplaysForcedOff = false;
             setAllDisplaysPowerSave(false);
@@ -177,8 +188,26 @@ static void updateSolarPowerPolicy(const PowerSample &solar, bool solarOnline) {
         gSolarDarkSinceMs = nowMs;
     }
 
+    if (gBootedFromTimerWake) {
+        if (!gDarkTimerWakeEvaluated) {
+            ++gDarkTimerWakeCount;
+            const uint32_t postEveryWakeCount = darkWakePostEveryWakeCount();
+            gDarkWakePostDue = gSettings.serverPostEnabled &&
+                strlen(gSettings.postUrl) > 0 &&
+                strlen(gSettings.wifiSsid) > 0 &&
+                (gDarkTimerWakeCount % postEveryWakeCount) == 0;
+            gDarkWakePostOnly = gDarkWakePostDue;
+            gDarkTimerWakeEvaluated = true;
+        }
+        if (!gDarkWakePostDue) {
+            enterSolarDeepSleep();
+        }
+        gDisplaysForcedOff = true;
+        return;
+    }
+
     if (gBootedFromTimerWake ||
-        hasElapsedMs(nowMs, gSolarDarkSinceMs, BoardConfig::kSolarDarkDeepSleepDelayMs)) {
+        hasElapsedMs(nowMs, gSolarDarkSinceMs, gSettings.solarDarkDeepSleepDelayMs)) {
         enterSolarDeepSleep();
     }
 }

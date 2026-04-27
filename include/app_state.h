@@ -3,7 +3,14 @@
 #include <Adafruit_BME280.h>
 #include <Adafruit_INA219.h>
 #include <Arduino.h>
+#include <DNSServer.h>
+#include <HTTPClient.h>
+#include <Preferences.h>
+#include <SPIFFS.h>
 #include <U8g2lib.h>
+#include <Update.h>
+#include <WebServer.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
@@ -34,6 +41,7 @@ constexpr uint32_t kDisplayTaskStack = 8192;
 constexpr uint32_t kSensorTaskStack = 6144;
 constexpr uint32_t kCommsTaskStack = 8192;
 constexpr uint32_t kMaintenanceTaskStack = 6144;
+constexpr uint32_t kNetworkTaskStack = 12288;
 constexpr size_t kForecastHistoryCapacity =
     (BoardConfig::kForecastLookbackMs / BoardConfig::kForecastSampleMs) + 4U;
 
@@ -49,6 +57,7 @@ extern TaskHandle_t gDisplayTaskHandle;
 extern TaskHandle_t gSensorTaskHandle;
 extern TaskHandle_t gCommsTaskHandle;
 extern TaskHandle_t gMaintenanceTaskHandle;
+extern TaskHandle_t gNetworkTaskHandle;
 
 extern String gSerialLine;
 extern uint8_t gWindSpeedAddrActive;
@@ -72,5 +81,15 @@ extern SolarLightMode gSolarLightMode;
 extern uint32_t gSolarDarkSinceMs;
 extern bool gDisplaysForcedOff;
 extern bool gBootedFromTimerWake;
+extern bool gDarkWakePostOnly;
+extern bool gDarkWakePostDue;
+extern bool gDarkTimerWakeEvaluated;
+extern uint32_t gDarkTimerWakeCount;
+extern RuntimeSettings gSettings;
+extern NetworkRuntimeState gNetworkRuntime;
+extern OtaUploadState gOtaUpload;
+extern WebServer gWebServer;
+extern DNSServer gDnsServer;
+extern Preferences gSettingsPrefs;
 
 extern const DrawFunc kDrawFuncs[kNumDisplays];

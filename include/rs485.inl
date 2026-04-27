@@ -137,7 +137,8 @@ static bool classifyModbusAddr(uint8_t address, bool &isDirectionSensor) {
     uint16_t reg = 0;
     if (!modbusRead(address, 0x0000, 1, &reg, 80)) return false;
     rs485InterQueryDelay();
-    isDirectionSensor = modbusRead(address, 0x0002, 1, &reg, 80);
+    if (!modbusRead(address, 0x0002, 1, &reg, 80)) return false;
+    isDirectionSensor = true;
     return true;
 }
 

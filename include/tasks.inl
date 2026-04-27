@@ -117,3 +117,13 @@ static void displayTask(void *parameter) {
         esp_task_wdt_reset();
     }
 }
+
+static void networkTask(void *parameter) {
+    (void)parameter;
+
+    for (;;) {
+        applyNetworkPolicy();
+        esp_task_wdt_reset();
+        taskDelayMs(BoardConfig::kWifiPolicyPollMs);
+    }
+}

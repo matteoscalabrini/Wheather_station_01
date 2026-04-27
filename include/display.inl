@@ -32,8 +32,8 @@ static bool displayNeedsRefresh(uint8_t index, const TelemetryState &current,
                 circularAngleDelta(normalizeRelativeWindDeg(current.wind.directionDeg),
                                    normalizeRelativeWindDeg(previous.wind.directionDeg)) >=
                     BoardConfig::kDisplayWindAngleDeltaDeg ||
-                strcmp(windRelativeLabel(current.wind.directionDeg),
-                       windRelativeLabel(previous.wind.directionDeg)) != 0;
+                windRelativeSector(current.wind.directionDeg) !=
+                    windRelativeSector(previous.wind.directionDeg);
         case 6:
             return current.solarOnline != previous.solarOnline ||
                 floatDelta(current.solar.powerW, previous.solar.powerW) >=

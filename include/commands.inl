@@ -128,6 +128,7 @@ static void readSerial() {
                 gSerialLine = "";
             }
         } else {
+            if (gSerialLine.length() >= 128) gSerialLine = "";
             gSerialLine += ch;
         }
     }

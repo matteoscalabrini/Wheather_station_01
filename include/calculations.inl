@@ -194,6 +194,13 @@ static const char *windRelativeLabel(float directionDeg) {
     return kLabels[index];
 }
 
+static uint8_t windRelativeSector(float directionDeg) {
+    const float relativeDeg = normalizeRelativeWindDeg(directionDeg);
+    uint8_t index = (uint8_t)((relativeDeg + 22.5f) / 45.0f);
+    if (index >= 8) index = 0;
+    return index;
+}
+
 static const char *rs485ConfigLabel(uint32_t config) {
     if (config == SERIAL_8N1) return "8N1";
     if (config == SERIAL_8E1) return "8E1";

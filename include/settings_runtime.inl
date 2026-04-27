@@ -1,0 +1,110 @@
+#include "secrets.h"
+
+static void copySetting(char *dest, size_t destSize, const String &value) {
+    if (destSize == 0) return;
+    const size_t copyLen = value.length() < (destSize - 1) ? value.length() : (destSize - 1);
+    memcpy(dest, value.c_str(), copyLen);
+    dest[copyLen] = '\0';
+}
+
+static void copySetting(char *dest, size_t destSize, const char *value) {
+    copySetting(dest, destSize, String(value != nullptr ? value : ""));
+}
+
+static void loadDefaultRuntimeSettings() {
+    gSettings.solarSunEnterVoltageV = BoardConfig::kSolarSunEnterVoltageV;
+    gSettings.solarSunExitVoltageV = BoardConfig::kSolarSunExitVoltageV;
+    gSettings.solarSunMinPowerW = BoardConfig::kSolarSunMinPowerW;
+    gSettings.solarDarkEnterVoltageV = BoardConfig::kSolarDarkEnterVoltageV;
+    gSettings.solarDarkExitVoltageV = BoardConfig::kSolarDarkExitVoltageV;
+    gSettings.solarDarkDeepSleepDelayMs = BoardConfig::kSolarDarkDeepSleepDelayMs;
+    gSettings.solarDeepSleepWakeMs = BoardConfig::kSolarDeepSleepWakeMs;
+    gSettings.serverPostSunMs = SECRET_SERVER_POST_SUN_MS;
+    gSettings.serverPostShadowMs = SECRET_SERVER_POST_SHADOW_MS;
+    gSettings.serverPostDarkMs = SECRET_SERVER_POST_DARK_MS;
+    gSettings.serverPostEnabled = SECRET_SERVER_POST_ENABLED;
+    copySetting(gSettings.adminPassword, sizeof(gSettings.adminPassword),
+                BoardConfig::kDefaultAdminPassword);
+    copySetting(gSettings.wifiSsid, sizeof(gSettings.wifiSsid), "");
+    copySetting(gSettings.wifiPassword, sizeof(gSettings.wifiPassword), "");
+    copySetting(gSettings.postUrl, sizeof(gSettings.postUrl), SECRET_POST_URL);
+    copySetting(gSettings.postToken, sizeof(gSettings.postToken), SECRET_POST_TOKEN);
+}
+
+static void loadRuntimeSettings() {
+    loadDefaultRuntimeSettings();
+
+    if (!gSettingsPrefs.begin("weather", true)) {
+        Serial.println("Settings: using defaults (NVS read failed)");
+        return;
+    }
+
+    gSettings.solarSunEnterVoltageV =
+        gSettingsPrefs.getFloat("sunEnterV", gSettings.solarSunEnterVoltageV);
+    gSettings.solarSunExitVoltageV =
+        gSettingsPrefs.getFloat("sunExitV", gSettings.solarSunExitVoltageV);
+    gSettings.solarSunMinPowerW =
+        gSettingsPrefs.getFloat("sunMinW", gSettings.solarSunMinPowerW);
+    gSettings.solarDarkEnterVoltageV =
+        gSettingsPrefs.getFloat("darkEnterV", gSettings.solarDarkEnterVoltageV);
+    gSettings.solarDarkExitVoltageV =
+        gSettingsPrefs.getFloat("darkExitV", gSettings.solarDarkExitVoltageV);
+    gSettings.solarDarkDeepSleepDelayMs =
+        gSettingsPrefs.getUInt("darkDelayMs", gSettings.solarDarkDeepSleepDelayMs);
+    gSettings.solarDeepSleepWakeMs =
+        gSettingsPrefs.getUInt("sleepWakeMs", gSettings.solarDeepSleepWakeMs);
+    gSettings.serverPostSunMs =
+        gSettingsPrefs.getUInt("postSunMs", gSettings.serverPostSunMs);
+    gSettings.serverPostShadowMs =
+        gSettingsPrefs.getUInt("postShadowMs", gSettings.serverPostShadowMs);
+    gSettings.serverPostDarkMs =
+        gSettingsPrefs.getUInt("postDarkMs", gSettings.serverPostDarkMs);
+    gSettings.serverPostEnabled =
+        gSettingsPrefs.getBool("postEnabled", gSettings.serverPostEnabled);
+    copySetting(gSettings.adminPassword, sizeof(gSettings.adminPassword),
+                gSettingsPrefs.getString("adminPass", gSettings.adminPassword));
+    copySetting(gSettings.wifiSsid, sizeof(gSettings.wifiSsid),
+                gSettingsPrefs.getString("wifiSsid", gSettings.wifiSsid));
+    copySetting(gSettings.wifiPassword, sizeof(gSettings.wifiPassword),
+                gSettingsPrefs.getString("wifiPass", gSettings.wifiPassword));
+    copySetting(gSettings.postUrl, sizeof(gSettings.postUrl),
+                gSettingsPrefs.getString("postUrl", gSettings.postUrl));
+    copySetting(gSettings.postToken, sizeof(gSettings.postToken),
+                gSettingsPrefs.getString("postToken", gSettings.postToken));
+    gSettingsPrefs.end();
+}
+
+static bool saveRuntimeSettings() {
+    if (!gSettingsPrefs.begin("weather", false)) {
+        return false;
+    }
+
+    gSettingsPrefs.putFloat("sunEnterV", gSettings.solarSunEnterVoltageV);
+    gSettingsPrefs.putFloat("sunExitV", gSettings.solarSunExitVoltageV);
+    gSettingsPrefs.putFloat("sunMinW", gSettings.solarSunMinPowerW);
+    gSettingsPrefs.putFloat("darkEnterV", gSettings.solarDarkEnterVoltageV);
+    gSettingsPrefs.putFloat("darkExitV", gSettings.solarDarkExitVoltageV);
+    gSettingsPrefs.putUInt("darkDelayMs", gSettings.solarDarkDeepSleepDelayMs);
+    gSettingsPrefs.putUInt("sleepWakeMs", gSettings.solarDeepSleepWakeMs);
+    gSettingsPrefs.putUInt("postSunMs", gSettings.serverPostSunMs);
+    gSettingsPrefs.putUInt("postShadowMs", gSettings.serverPostShadowMs);
+    gSettingsPrefs.putUInt("postDarkMs", gSettings.serverPostDarkMs);
+    gSettingsPrefs.putBool("postEnabled", gSettings.serverPostEnabled);
+    gSettingsPrefs.putString("adminPass", gSettings.adminPassword);
+    gSettingsPrefs.putString("wifiSsid", gSettings.wifiSsid);
+    gSettingsPrefs.putString("wifiPass", gSettings.wifiPassword);
+    gSettingsPrefs.putString("postUrl", gSettings.postUrl);
+    gSettingsPrefs.putString("postToken", gSettings.postToken);
+    gSettingsPrefs.end();
+    return true;
+}
+
+static bool validRuntimeSettings() {
+    return gSettings.solarSunExitVoltageV < gSettings.solarSunEnterVoltageV &&
+        gSettings.solarDarkEnterVoltageV < gSettings.solarDarkExitVoltageV &&
+        gSettings.solarDarkExitVoltageV < gSettings.solarSunEnterVoltageV &&
+        gSettings.solarSunMinPowerW >= 0.0f &&
+        gSettings.solarDeepSleepWakeMs >= 60000UL &&
+        gSettings.serverPostDarkMs >= 60000UL &&
+        strlen(gSettings.adminPassword) > 0;
+}

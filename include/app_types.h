@@ -82,4 +82,48 @@ struct ForecastHistoryPoint {
     float pressureHpa;
 };
 
+struct RuntimeSettings {
+    float solarSunEnterVoltageV;
+    float solarSunExitVoltageV;
+    float solarSunMinPowerW;
+    float solarDarkEnterVoltageV;
+    float solarDarkExitVoltageV;
+    uint32_t solarDarkDeepSleepDelayMs;
+    uint32_t solarDeepSleepWakeMs;
+    uint32_t serverPostSunMs;
+    uint32_t serverPostShadowMs;
+    uint32_t serverPostDarkMs;
+    bool serverPostEnabled;
+    char adminPassword[33];
+    char wifiSsid[33];
+    char wifiPassword[65];
+    char postUrl[161];
+    char postToken[97];
+};
+
+struct NetworkRuntimeState {
+    bool spiffsReady;
+    bool webReady;
+    bool wifiEnabled;
+    bool apEnabled;
+    bool staConnected;
+    bool posting;
+    uint32_t lastPolicyMs;
+    uint32_t lastPostAttemptMs;
+    uint32_t lastPostSuccessMs;
+    int lastPostHttpCode;
+    char lastPostMessage[40];
+};
+
+struct OtaUploadState {
+    bool inProgress;
+    bool success;
+    bool failed;
+    bool unauthorized;
+    bool rebootRequested;
+    size_t bytesWritten;
+    char target[12];
+    char message[40];
+};
+
 using DrawFunc = void (*)(U8G2 &, const TelemetryState &);

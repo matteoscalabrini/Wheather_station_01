@@ -86,7 +86,7 @@ Dark-mode behavior:
 - sensor sampling, wind polling, display heartbeat, and maintenance slow to `60000 ms`
 - after `4 h` continuously in dark mode, all OLEDs are placed in power-save mode and the ESP32 enters deep sleep
 - deep sleep wake interval is `10 min`
-- on timer wake, the firmware reads INA219 #1 before initializing displays; if solar voltage is still dark, it immediately sleeps again
+- on timer wake, the firmware reads INA219 #1 before initializing displays; if solar voltage is still dark, it immediately sleeps again unless a 30-minute server post is due
 - if solar voltage wakes into shadow or sun, normal display and polling behavior resumes
 - if INA219 #1 is offline or invalid, the firmware does not enter solar-triggered deep sleep
 
@@ -96,6 +96,37 @@ Display behavior in this profile:
 - each refresh wakes only the affected displays instead of sweeping all 9 panels
 
 Thresholds are configurable in `include/board_config.h` for solar mode, sleep timing, temperature, humidity, pressure, wind, power, voltage, and battery percentage.
+
+## WiFi, Web UI, And Posting
+
+The firmware includes a solar-aware WiFi stack with SPIFFS-hosted web UI and web OTA.
+
+Solar mode policy:
+- **Sun mode:** WiFi stays on, the station AP stays on, the web UI is available, and STA connects to the configured WiFi when credentials exist
+- **Shadow mode:** WiFi is normally off and wakes only for configured server posts every `10 min`
+- **Dark mode before deep sleep:** WiFi is normally off and wakes only for configured server posts every `30 min`
+- **Dark timer wake from deep sleep:** the station reads solar first; if still dark, it posts only on the configured 30-minute cadence, then returns to deep sleep
+
+Debug override:
+- `BoardConfig::kWifiDebugForceApAlways` keeps the setup AP available in every solar mode while the ESP32 is awake. Deep sleep still powers WiFi down.
+
+Default AP:
+- SSID: `WeatherStation-AP`
+- Open network, no password
+- Captive DNS redirects connected clients to the local dashboard where supported by the phone/computer OS
+
+Default admin password: `admin`.
+
+Web routes:
+- `/` — SPIFFS OLED-style dashboard with the 9 display groups and a top-right admin menu
+- `/api/status` — public JSON telemetry
+- `/api/admin/config` — password-protected settings GET/POST
+- `/api/admin/wifi-scan` — password-protected WiFi scan
+- `/api/admin/post-now` — password-protected manual telemetry POST
+- `/api/ota/upload` — password-protected firmware OTA
+- `/api/ota/upload-spiffs` — password-protected SPIFFS OTA
+
+Settings saved to flash include solar thresholds, sleep/post intervals, WiFi credentials, server POST URL/token, and admin password. Compile-time defaults remain in `include/board_config.h` and are used when flash settings are missing or invalid.
 
 ## Display Layout — 9 Screens
 
@@ -171,6 +202,8 @@ Both on dedicated hardware sensor bus 5 (no display traffic):
 | `include/app_types.h` | Shared firmware structs, enums, and draw callback type |
 | `include/app_state.h` | Shared constants and global state declarations |
 | `include/*.inl` | Subsystem implementations included by `src/main.cpp` |
+| `data/` | SPIFFS web UI assets |
+| `partitions.csv` | OTA + SPIFFS partition table |
 | `src/main.cpp` | Firmware entry point, global object definitions, setup/loop |
 
 Libraries:
@@ -178,12 +211,14 @@ Libraries:
 - `Adafruit BME280 Library` — BME280 sensor driver
 - `Adafruit INA219 Library` — INA219 power monitor driver
 - `Adafruit Unified Sensor` — dependency of Adafruit BME280
+- ESP32 Arduino core services — WiFi, WebServer, HTTPClient, Preferences, SPIFFS, and Update
 
 ## Build and Flash
 
 ```bash
 ~/.platformio/penv/bin/pio run              # build
 ~/.platformio/penv/bin/pio run -t upload    # flash
+~/.platformio/penv/bin/pio run -t uploadfs  # flash SPIFFS web UI
 ~/.platformio/penv/bin/pio device monitor -b 115200  # serial
 ```
 
@@ -195,3 +230,4 @@ Libraries:
 - Battery percentage is only as accurate as the configured empty/full voltage thresholds in `include/board_config.h`.
 - `GPIO16`/`GPIO17` are used for RS485 UART only — no longer shared with I2C bus 3 (bus 3 now uses GPIO 5/18).
 - Some third-party 128×128 OLED modules marked as 3.3 V behave more reliably from 5 V.
+- The OTA partition table gives each firmware slot `0x140000` bytes; current firmware fits, but feature growth should watch flash usage.

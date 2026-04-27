@@ -106,6 +106,19 @@ static constexpr float    kSolarDarkEnterVoltageV        = 10.0f;
 static constexpr float    kSolarDarkExitVoltageV         = 11.0f;
 static constexpr uint32_t kSolarDarkDeepSleepDelayMs     = 4UL * 60UL * 60UL * 1000UL;
 static constexpr uint32_t kSolarDeepSleepWakeMs          = 10UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostSunMs               = 10UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostShadowMs            = 10UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostDarkMs              = 30UL * 60UL * 1000UL;
+static constexpr uint32_t kWifiPolicyPollMs              = 1000UL;
+static constexpr uint32_t kWifiConnectTimeoutMs          = 15000UL;
+static constexpr uint32_t kWifiReconnectRetryMs          = 30000UL;
+// Debug override: keeps the setup AP available in every solar mode while the
+// ESP32 is awake. Deep sleep still powers WiFi down.
+static constexpr bool     kWifiDebugForceApAlways        = true;
+static constexpr char     kWifiApSsid[]                  = "WeatherStation-AP";
+static constexpr bool     kWifiApOpen                    = true;
+static constexpr char     kWifiApPassword[]              = "";
+static constexpr char     kDefaultAdminPassword[]        = "admin";
 static constexpr uint8_t  kDisplaySunContrast            = 255U;
 static constexpr uint8_t  kDisplayShadowContrast         = kDisplayContrast;
 static constexpr uint8_t  kDisplayDarkGraceContrast      = 48U;
