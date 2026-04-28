@@ -114,7 +114,7 @@ static constexpr uint32_t kWifiConnectTimeoutMs          = 15000UL;
 static constexpr uint32_t kWifiReconnectRetryMs          = 30000UL;
 // Debug override: keeps the setup AP available in every solar mode while the
 // ESP32 is awake. Deep sleep still powers WiFi down.
-static constexpr bool     kWifiDebugForceApAlways        = true;
+static constexpr bool     kWifiDebugForceApAlways        = false;
 static constexpr char     kWifiApSsid[]                  = "WeatherStation-AP";
 static constexpr bool     kWifiApOpen                    = true;
 static constexpr char     kWifiApPassword[]              = "";
