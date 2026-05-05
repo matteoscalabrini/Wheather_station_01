@@ -91,13 +91,13 @@ static constexpr bool     kDisplayUsePowerSave           = false;
 static constexpr uint8_t  kDisplayShadowContrastLow      = kEnableBatterySaver ? 24U : 255U;
 static constexpr uint8_t  kDisplayDarkGraceContrastLow   = kEnableBatterySaver ? 16U : 255U;
 static constexpr uint8_t  kDisplayContrast               = kDisplayShadowContrastLow;
-static constexpr uint32_t kDisplayHeartbeatMs            = kEnableBatterySaver ? 60000UL : 5000UL;
-static constexpr uint32_t kDisplayOnlineProbeMs          = kEnableBatterySaver ? 5UL * 60UL * 1000UL : 30000UL;
-static constexpr uint32_t kDisplayOfflineRetryMs         = kEnableBatterySaver ? 60000UL : 3000UL;
-static constexpr uint32_t kSensorSampleMs                = kEnableBatterySaver ? 15000UL : 2000UL;
-static constexpr uint32_t kWindSampleMs                  = kEnableBatterySaver ? 3000UL : 1000UL;
-static constexpr uint32_t kCommandPollMs                 = kEnableBatterySaver ? 250UL : 20UL;
-static constexpr uint32_t kI2cMaintenanceMs              = kEnableBatterySaver ? 60000UL : 3000UL;
+static constexpr uint32_t kDisplayHeartbeatMs            = kEnableBatterySaver ? 3UL * 60UL * 1000UL : 5000UL;
+static constexpr uint32_t kDisplayOnlineProbeMs          = kEnableBatterySaver ? 10UL * 60UL * 1000UL : 30000UL;
+static constexpr uint32_t kDisplayOfflineRetryMs         = kEnableBatterySaver ? 2UL * 60UL * 1000UL : 3000UL;
+static constexpr uint32_t kSensorSampleMs                = kEnableBatterySaver ? 30000UL : 2000UL;
+static constexpr uint32_t kWindSampleMs                  = kEnableBatterySaver ? 10000UL : 1000UL;
+static constexpr uint32_t kCommandPollMs                 = kEnableBatterySaver ? 500UL : 20UL;
+static constexpr uint32_t kI2cMaintenanceMs              = kEnableBatterySaver ? 3UL * 60UL * 1000UL : 3000UL;
 static constexpr uint32_t kTaskWatchdogTimeoutS          = 120UL;
 static constexpr uint32_t kDisplayIdleTimeoutMs          = 0UL;
 static constexpr float    kDisplayTempDeltaC             = 0.3f;
@@ -126,13 +126,13 @@ static constexpr float    kSolarDarkEnterVoltageV        = 10.0f;
 static constexpr float    kSolarDarkExitVoltageV         = 11.0f;
 static constexpr uint32_t kSolarDarkDeepSleepDelayMs     = 2UL * 60UL * 60UL * 1000UL;
 static constexpr uint32_t kSolarDeepSleepWakeMs          = 10UL * 60UL * 1000UL;
-static constexpr uint32_t kServerPostSunMs               = 10UL * 60UL * 1000UL;
-static constexpr uint32_t kServerPostShadowMs            = 10UL * 60UL * 1000UL;
-static constexpr uint32_t kServerPostDarkMs              = 30UL * 60UL * 1000UL;
-static constexpr uint32_t kRemoteConfigPullMs            = 10UL * 60UL * 1000UL;
-static constexpr uint32_t kRemoteFirmwareCheckMs         = 60UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostSunMs               = 15UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostShadowMs            = 20UL * 60UL * 1000UL;
+static constexpr uint32_t kServerPostDarkMs              = 60UL * 60UL * 1000UL;
+static constexpr uint32_t kRemoteConfigPullMs            = 30UL * 60UL * 1000UL;
+static constexpr uint32_t kRemoteFirmwareCheckMs         = 4UL * 60UL * 60UL * 1000UL;
 static constexpr uint32_t kWifiPolicyPollMs              = 1000UL;
-static constexpr uint32_t kWifiConnectTimeoutMs          = 15000UL;
+static constexpr uint32_t kWifiConnectTimeoutMs          = 10000UL;
 static constexpr uint32_t kHttpConnectTimeoutMs          = 15000UL;
 static constexpr uint16_t kHttpReadTimeoutMs             = 20000U;
 static constexpr uint32_t kRemoteFailureRetryMs          = 5UL * 60UL * 1000UL;
@@ -140,11 +140,11 @@ static constexpr uint32_t kRemoteFailureRetryMs          = 5UL * 60UL * 1000UL;
 // dark mode, briefly expose the setup AP so the network settings can be
 // repaired locally. Dark mode never uses this recovery AP.
 static constexpr bool     kWifiRecoveryApOnShadowStaFailure = true;
-static constexpr uint32_t kWifiRecoveryApMs              = 10UL * 60UL * 1000UL;
-static constexpr uint8_t  kWifiRecoveryApMaxConsecutive  = 3U;
+static constexpr uint32_t kWifiRecoveryApMs              = 3UL * 60UL * 1000UL;
+static constexpr uint8_t  kWifiRecoveryApMaxConsecutive  = 1U;
 // After hitting the consecutive recovery-AP cap, wait this long before
 // automatically re-arming recovery AP again.
-static constexpr uint32_t kWifiRecoveryApRearmMs         = 10UL * 60UL * 1000UL;
+static constexpr uint32_t kWifiRecoveryApRearmMs         = 30UL * 60UL * 1000UL;
 // Debug override default: when true, keeps the setup AP available in every
 // solar mode while the ESP32 is awake. Keep false for burst-only WiFi.
 static constexpr bool     kWifiDebugForceApAlways        = false;
@@ -161,10 +161,10 @@ static constexpr uint32_t kSensorSampleDarkMs            = 60000UL;
 static constexpr uint32_t kWindSampleSunMs               = 1000UL;
 static constexpr uint32_t kWindSampleShadowMs            = kWindSampleMs;
 static constexpr uint32_t kWindSampleDarkMs              = 60000UL;
-static constexpr uint32_t kDisplayHeartbeatSunMs         = 15000UL;
+static constexpr uint32_t kDisplayHeartbeatSunMs         = 30000UL;
 static constexpr uint32_t kDisplayHeartbeatShadowMs      = kDisplayHeartbeatMs;
 static constexpr uint32_t kDisplayHeartbeatDarkMs        = 60000UL;
-static constexpr uint32_t kI2cMaintenanceSunMs           = 30000UL;
+static constexpr uint32_t kI2cMaintenanceSunMs           = 60000UL;
 static constexpr uint32_t kI2cMaintenanceShadowMs        = kI2cMaintenanceMs;
 static constexpr uint32_t kI2cMaintenanceDarkMs          = 60000UL;
 

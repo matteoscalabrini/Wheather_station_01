@@ -86,21 +86,21 @@ CPU frequency follows solar mode and radio state:
 Shadow-mode battery-saver timings:
 - CPU clock: `80 MHz` between radio bursts and while WiFi/AP is active
 - display contrast: `24`
-- display redraw heartbeat: `60000 ms`
-- healthy display presence probe: `300000 ms`
-- offline display retry: `60000 ms`
-- sensor sampling: `15000 ms`
-- wind polling: `3000 ms`
-- serial command polling: `250 ms`
-- sensor/display maintenance pass: `60000 ms`
+- display redraw heartbeat: `180000 ms`
+- healthy display presence probe: `600000 ms`
+- offline display retry: `120000 ms`
+- sensor sampling: `30000 ms`
+- wind polling: `10000 ms`
+- serial command polling: `500 ms`
+- sensor/display maintenance pass: `180000 ms`
 
 Sun-mode timing changes:
 - CPU clock: `160 MHz`
 - display contrast: `255`
-- display redraw heartbeat: `15000 ms`
+- display redraw heartbeat: `30000 ms`
 - sensor sampling: `5000 ms`
 - wind polling: `1000 ms`
-- sensor/display maintenance pass: `30000 ms`
+- sensor/display maintenance pass: `60000 ms`
 
 Dark-mode behavior:
 - CPU clock: `80 MHz`
@@ -108,7 +108,7 @@ Dark-mode behavior:
 - sensor sampling, wind polling, display heartbeat, and maintenance slow to `60000 ms`
 - after `2 h` continuously in dark mode, all OLEDs are placed in power-save mode and the ESP32 enters deep sleep
 - deep sleep wake interval is `10 min`
-- on timer wake, the firmware reads INA219 #1 before initializing displays, retrying transient invalid solar samples up to 3 times; if solar voltage is still dark, it immediately sleeps again unless a 30-minute server post is due
+- on timer wake, the firmware reads INA219 #1 before initializing displays, retrying transient invalid solar samples up to 3 times; if solar voltage is still dark, it immediately sleeps again unless a dark-mode server post is due
 - if solar voltage wakes into shadow or sun, normal display and polling behavior resumes
 - if INA219 #1 is offline or invalid, the firmware does not enter solar-triggered deep sleep
 
@@ -130,10 +130,10 @@ Solar mode network policy:
 - A network burst starts only for a configured server post, a manual local **Post Now**, or local setup/admin use while the setup AP is intentionally active.
 - During a post burst, the station sends telemetry, pulls remote config if due, checks firmware/SPIFFS if due, then turns STA/AP radios off again unless **Debug AP always** is enabled.
 - A failed scheduled post is retried after `min(interval / 4, 60000 ms)`; successful posts wait for the full mode interval.
-- **Sun mode:** posts use the sun interval, `10 min` by default.
-- **Shadow mode:** posts use the shadow interval, `10 min` by default.
-- **WiFi recovery (non-dark):** if a scheduled post cannot connect to the saved station WiFi, the setup AP is exposed for `10 min` so WiFi settings can be repaired locally. The recovery AP is limited to `3` consecutive recovery windows, then re-arms after `10 min` or immediately after a successful station connection; it is never used in dark mode.
-- **Dark mode before deep sleep:** posts use the dark interval, `30 min` by default.
+- **Sun mode:** posts use the sun interval, `15 min` by default.
+- **Shadow mode:** posts use the shadow interval, `20 min` by default.
+- **WiFi recovery (non-dark):** if a scheduled post cannot connect to the saved station WiFi, the setup AP is exposed for `3 min` so WiFi settings can be repaired locally. The recovery AP is limited to `1` consecutive recovery window, then re-arms after `30 min` or immediately after a successful station connection; it is never used in dark mode.
+- **Dark mode before deep sleep:** posts use the dark interval, `60 min` by default.
 - **Dark timer wake from deep sleep:** the station reads solar first; if still dark, it posts only on the configured dark cadence, takes a one-shot RS485 wind sample, performs any due remote management in the same WiFi session, then returns to deep sleep. If that dark-wake post fails, the wake counter is rolled back so the next timer wake retries the missed slot.
 
 Debug AP:
@@ -152,8 +152,8 @@ WiFi settings:
 
 Remote website management:
 - The station derives the website origin from `postUrl` and authenticates device calls with `postToken`.
-- Remote config is fetched from `/api/device/config` only during an already scheduled post WiFi session; the `600000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
-- Firmware/SPIFFS update checks are fetched from `/api/device/firmware?version=<firmware>&spiffs=<spiffs>` only during an already scheduled post WiFi session; the `3600000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
+- Remote config is fetched from `/api/device/config` only during an already scheduled post WiFi session; the `1800000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
+- Firmware/SPIFFS update checks are fetched from `/api/device/firmware?version=<firmware>&spiffs=<spiffs>` only during an already scheduled post WiFi session; the `14400000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
 - Remote config can update solar thresholds, sleep/post intervals, battery percentage bounds, battery lockout thresholds/wake interval, `serverPostEnabled`, **Debug AP always**, and the remote pull/check intervals.
 - Changing `serverPostDarkMs` or `solarDeepSleepWakeMs` resets the dark-wake counter so the next dark post cadence starts cleanly.
 - Remote config does not accept WiFi credentials, post tokens, or admin passwords.
