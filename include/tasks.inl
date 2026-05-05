@@ -56,6 +56,7 @@ static void sensorTask(void *parameter) {
                             battery, batteryOnline, batteryPercent);
         giveMutex(gSensorBusMutex);
 
+        updateBatteryLockoutPolicy(battery, batteryOnline, false);
         updateSolarPowerPolicy(solar, solarOnline);
         esp_task_wdt_reset();
         vTaskDelayUntil(&lastWake, pdMS_TO_TICKS(activeSensorSampleMs()));
@@ -96,24 +97,32 @@ static void commsTask(void *parameter) {
 static void displayTask(void *parameter) {
     (void)parameter;
     uint32_t pendingMask = kDisplayMaskAll;
+    bool forceRefresh = true;
 
     for (;;) {
         if (pendingMask == 0) {
             if (xTaskNotifyWait(0, UINT32_MAX, &pendingMask,
-                                pdMS_TO_TICKS(activeDisplayHeartbeatMs())) != pdPASS) {
+                                pdMS_TO_TICKS(activeDisplayHeartbeatMs())) == pdPASS) {
+                // Any explicit refresh request should repaint immediately.
+                forceRefresh = true;
+            } else {
                 pendingMask = kDisplayMaskAll;
+                forceRefresh = true;
             }
         }
 
         if (gDisplaysForcedOff) {
             pendingMask = 0;
+            forceRefresh = false;
+            taskDelayMs(25);
             esp_task_wdt_reset();
             continue;
         }
 
         const TelemetryState snapshot = copyTelemetry();
-        renderDisplayMask((uint16_t)pendingMask, snapshot);
+        renderDisplayMask((uint16_t)pendingMask, snapshot, forceRefresh);
         pendingMask = 0;
+        forceRefresh = false;
         esp_task_wdt_reset();
     }
 }

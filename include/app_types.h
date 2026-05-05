@@ -82,6 +82,9 @@ struct ForecastHistoryPoint {
     float pressureHpa;
 };
 
+// RuntimeSettings writes are owned by the network task and setup/loading code.
+// Other tasks may read numeric fields, but string fields need explicit
+// synchronization before being read outside the network runtime.
 struct RuntimeSettings {
     float solarSunEnterVoltageV;
     float solarSunExitVoltageV;
@@ -93,12 +96,21 @@ struct RuntimeSettings {
     uint32_t serverPostSunMs;
     uint32_t serverPostShadowMs;
     uint32_t serverPostDarkMs;
+    uint32_t remoteConfigPullMs;
+    uint32_t remoteFirmwareCheckMs;
+    float batteryPercentEmptyVoltageV;
+    float batteryPercentFullVoltageV;
+    float batteryLockoutEnterVoltageV;
+    float batteryLockoutResumeVoltageV;
+    uint32_t batteryLockoutWakeMs;
     bool serverPostEnabled;
+    bool wifiApAlways;
     char adminPassword[33];
     char wifiSsid[33];
     char wifiPassword[65];
     char postUrl[161];
     char postToken[97];
+    char spiffsVersion[49];
 };
 
 struct NetworkRuntimeState {
@@ -108,11 +120,25 @@ struct NetworkRuntimeState {
     bool apEnabled;
     bool staConnected;
     bool posting;
-    uint32_t lastPolicyMs;
+    bool remoteConfigPulling;
+    bool firmwareChecking;
+    bool recoveryApActive;
+    uint32_t lastWifiAttemptMs;
+    uint32_t recoveryApStartedMs;
     uint32_t lastPostAttemptMs;
+    uint32_t nextPostAllowedMs;
     uint32_t lastPostSuccessMs;
+    uint32_t lastRemoteConfigPullMs;
+    uint32_t lastFirmwareCheckMs;
+    int lastWifiStatus;
     int lastPostHttpCode;
+    int remoteConfigHttpCode;
+    int firmwareHttpCode;
+    int otaHttpCode;
+    char wifiMessage[40];
     char lastPostMessage[40];
+    char remoteConfigMessage[40];
+    char firmwareMessage[40];
 };
 
 struct OtaUploadState {

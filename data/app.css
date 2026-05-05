@@ -250,6 +250,23 @@ label {
 
 .wide { grid-column: 1 / -1; }
 
+.wifi-hint,
+.post-hint {
+  margin-top: .55rem;
+  color: var(--muted);
+  font-size: .78rem;
+  text-transform: uppercase;
+}
+
+.wifi-hint.connected,
+.post-hint.connected { color: var(--ok); }
+
+.wifi-hint.warn,
+.post-hint.warn { color: var(--warn); }
+
+.wifi-hint.bad,
+.post-hint.bad { color: var(--bad); }
+
 /* ─── WiFi scan ─────────────────────────────────────────────────────────────── */
 
 .scan-bar {

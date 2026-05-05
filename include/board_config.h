@@ -5,6 +5,8 @@
 namespace BoardConfig {
 
 static constexpr char kBoardName[] = "ESP32 Dev Module";
+static constexpr char kFirmwareVersion[] = "T3 V1.6.3";
+static constexpr char kSpiffsVersion[] = "T3 V1.6.3";
 
 // ─── I2C Bus 0 (Display bus, Software I2C) — SDA=32, SCL=33 ─────────────────
 // Devices: up to 2x SH1107 displays
@@ -57,10 +59,20 @@ static constexpr uint8_t kBme280SecondaryAddress = 0x77;  // SDO -> VCC
 static constexpr uint8_t kIna219_1_Address = 0x44;  // Solar power monitor
 static constexpr uint8_t kIna219_2_Address = 0x40;  // Battery power monitor
 
-// Battery percentage uses INA219 #2 load voltage with a linear mapping.
-// Adjust these thresholds to match your battery chemistry and pack voltage.
+// Battery percentage uses INA219 #2 load voltage with a 4S Li-ion curve.
+// Adjust these thresholds if your BMS/cutoff or charge target differs.
+static constexpr uint8_t kBatterySeriesCells = 4;
 static constexpr float kBatteryPercentEmptyVoltageV = 12.00f;
 static constexpr float kBatteryPercentFullVoltageV  = 16.80f;
+
+// Battery low-voltage lockout.
+// INA219 #2 load voltage is checked before normal boot work starts and during
+// regular sensor sampling. Runtime cutoff enters deep sleep at/below the enter
+// threshold; boot and timer wake guard stay asleep until the resume threshold.
+static constexpr bool     kEnableBatteryLowVoltageLockout = true;
+static constexpr float    kBatteryLockoutEnterVoltageV    = 11.50f;
+static constexpr float    kBatteryLockoutResumeVoltageV   = 12.80f;
+static constexpr uint32_t kBatteryLockoutWakeMs           = 60UL * 60UL * 1000UL;
 
 // ─── Power Saver Profile ──────────────────────────────────────────────────────
 // Battery-oriented profile. When enabled, task wakeups are slower, displays
@@ -68,9 +80,17 @@ static constexpr float kBatteryPercentFullVoltageV  = 16.80f;
 // after extended inactivity.
 static constexpr bool     kEnableBatterySaver            = true;
 static constexpr uint32_t kCpuFrequencyMhz               = kEnableBatterySaver ? 80UL : 240UL;
+static constexpr uint32_t kCpuFreqSunMhz                 = kEnableBatterySaver ? 160UL : 240UL;
+// Keep shadow idle at 80 MHz for bus stability (SW-I2C OLED + RS485 polling).
+static constexpr uint32_t kCpuFreqShadowIdleMhz          = kEnableBatterySaver ? 80UL : 240UL;
+static constexpr uint32_t kCpuFreqShadowBurstMhz         = kEnableBatterySaver ? 80UL : 240UL;
+static constexpr uint32_t kCpuFreqDarkMhz                = kEnableBatterySaver ? 80UL : 240UL;
+static constexpr uint32_t kCpuFreqUnknownMhz             = kCpuFrequencyMhz;
 static constexpr bool     kDisplayRedrawOnChangeOnly     = kEnableBatterySaver;
 static constexpr bool     kDisplayUsePowerSave           = false;
-static constexpr uint8_t  kDisplayContrast               = kEnableBatterySaver ? 96U : 255U;
+static constexpr uint8_t  kDisplayShadowContrastLow      = kEnableBatterySaver ? 24U : 255U;
+static constexpr uint8_t  kDisplayDarkGraceContrastLow   = kEnableBatterySaver ? 16U : 255U;
+static constexpr uint8_t  kDisplayContrast               = kDisplayShadowContrastLow;
 static constexpr uint32_t kDisplayHeartbeatMs            = kEnableBatterySaver ? 60000UL : 5000UL;
 static constexpr uint32_t kDisplayOnlineProbeMs          = kEnableBatterySaver ? 5UL * 60UL * 1000UL : 30000UL;
 static constexpr uint32_t kDisplayOfflineRetryMs         = kEnableBatterySaver ? 60000UL : 3000UL;
@@ -104,24 +124,37 @@ static constexpr float    kSolarSunExitVoltageV          = 15.0f;
 static constexpr float    kSolarSunMinPowerW             = 3.0f;
 static constexpr float    kSolarDarkEnterVoltageV        = 10.0f;
 static constexpr float    kSolarDarkExitVoltageV         = 11.0f;
-static constexpr uint32_t kSolarDarkDeepSleepDelayMs     = 4UL * 60UL * 60UL * 1000UL;
+static constexpr uint32_t kSolarDarkDeepSleepDelayMs     = 2UL * 60UL * 60UL * 1000UL;
 static constexpr uint32_t kSolarDeepSleepWakeMs          = 10UL * 60UL * 1000UL;
 static constexpr uint32_t kServerPostSunMs               = 10UL * 60UL * 1000UL;
 static constexpr uint32_t kServerPostShadowMs            = 10UL * 60UL * 1000UL;
 static constexpr uint32_t kServerPostDarkMs              = 30UL * 60UL * 1000UL;
+static constexpr uint32_t kRemoteConfigPullMs            = 10UL * 60UL * 1000UL;
+static constexpr uint32_t kRemoteFirmwareCheckMs         = 60UL * 60UL * 1000UL;
 static constexpr uint32_t kWifiPolicyPollMs              = 1000UL;
 static constexpr uint32_t kWifiConnectTimeoutMs          = 15000UL;
-static constexpr uint32_t kWifiReconnectRetryMs          = 30000UL;
-// Debug override: keeps the setup AP available in every solar mode while the
-// ESP32 is awake. Deep sleep still powers WiFi down.
+static constexpr uint32_t kHttpConnectTimeoutMs          = 15000UL;
+static constexpr uint16_t kHttpReadTimeoutMs             = 20000U;
+static constexpr uint32_t kRemoteFailureRetryMs          = 5UL * 60UL * 1000UL;
+// If a scheduled post cannot connect to the saved station WiFi while not in
+// dark mode, briefly expose the setup AP so the network settings can be
+// repaired locally. Dark mode never uses this recovery AP.
+static constexpr bool     kWifiRecoveryApOnShadowStaFailure = true;
+static constexpr uint32_t kWifiRecoveryApMs              = 10UL * 60UL * 1000UL;
+static constexpr uint8_t  kWifiRecoveryApMaxConsecutive  = 3U;
+// After hitting the consecutive recovery-AP cap, wait this long before
+// automatically re-arming recovery AP again.
+static constexpr uint32_t kWifiRecoveryApRearmMs         = 10UL * 60UL * 1000UL;
+// Debug override default: when true, keeps the setup AP available in every
+// solar mode while the ESP32 is awake. Keep false for burst-only WiFi.
 static constexpr bool     kWifiDebugForceApAlways        = false;
 static constexpr char     kWifiApSsid[]                  = "WeatherStation-AP";
 static constexpr bool     kWifiApOpen                    = true;
 static constexpr char     kWifiApPassword[]              = "";
-static constexpr char     kDefaultAdminPassword[]        = "admin";
+static constexpr char     kDefaultAdminPassword[]        = "dflonline07";
 static constexpr uint8_t  kDisplaySunContrast            = 255U;
-static constexpr uint8_t  kDisplayShadowContrast         = kDisplayContrast;
-static constexpr uint8_t  kDisplayDarkGraceContrast      = 48U;
+static constexpr uint8_t  kDisplayShadowContrast         = kDisplayShadowContrastLow;
+static constexpr uint8_t  kDisplayDarkGraceContrast      = kDisplayDarkGraceContrastLow;
 static constexpr uint32_t kSensorSampleSunMs             = 5000UL;
 static constexpr uint32_t kSensorSampleShadowMs          = kSensorSampleMs;
 static constexpr uint32_t kSensorSampleDarkMs            = 60000UL;

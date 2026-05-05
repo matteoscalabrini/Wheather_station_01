@@ -1,4 +1,4 @@
-# T3 V1.6.1 Weather Station
+# T3 V1.6.2 Weather Station
 
 This project is intentionally narrow:
 - one board target
@@ -42,18 +42,28 @@ Each bus with two displays uses the standard `0x3C`/`0x3D` address pair. Single-
 
 ## Runtime Architecture
 
-The firmware runs on top of Arduino's FreeRTOS support with four pinned tasks:
+The firmware runs on top of Arduino's FreeRTOS support with pinned tasks:
 
-- `display-task` on core 0 sleeps until telemetry changes, then redraws only the affected OLEDs; a long heartbeat redraw keeps the panels fresh without a constant sweep
+- `display-task` on core 0 sleeps until telemetry changes, then redraws only the affected OLEDs; a long heartbeat forces a full redraw to keep unchanged panels visible
 - `sensor-task` on core 1 samples the BME280 and both INA219s
 - `comms-task` on core 1 handles RS485 polling and serial commands
 - `i2c-maint-task` on core 1 retries offline sensors, and probes display presence on a long cadence instead of continuously scanning healthy buses
+- `network-task` on core 1 applies the solar-aware WiFi and posting policy
 
 Sensor values are shared through a mutex-protected telemetry snapshot so display refresh, reconnect logic, and sensor polling do not trample each other.
 
 ## Power Saver
 
 Battery-saver mode is enabled by default in `include/board_config.h` via `kEnableBatterySaver`.
+
+The battery low-voltage lockout is enabled by default via `kEnableBatteryLowVoltageLockout`. INA219 #2 battery load voltage is checked before the normal boot path initializes displays, RS485, WiFi, or non-battery sensors, and is checked again during regular sensor sampling:
+
+- runtime cutoff: `<= 11.50 V` enters battery lockout deep sleep
+- boot/timer wake guard: if battery voltage is below the configured resume threshold, the station immediately returns to deep sleep
+- wake interval while locked out: `1 h`
+- when the pack reaches `>= 12.80 V`, the lockout latch clears and normal solar-aware behavior resumes
+- if INA219 #2 is unavailable during an already-latched battery lockout, the station stays asleep and retries on the next hourly wake
+- if INA219 #2 is unavailable on a non-latched boot, battery lockout cannot be evaluated and the station continues normal boot
 
 The solar-voltage power policy is also enabled by default via `kEnableSolarPowerPolicy`. INA219 #1 solar load voltage and power are used as the light/charge proxy:
 
@@ -64,8 +74,18 @@ The solar-voltage power policy is also enabled by default via `kEnableSolarPower
 
 The mode uses voltage hysteresis before leaving sun or dark mode, so voltage noise near the thresholds does not rapidly flip the schedule.
 
+CPU frequency follows solar mode and radio state:
+
+| Mode | Radio Off | Radio On |
+| --- | ---: | ---: |
+| Sun | `160 MHz` | `160 MHz` |
+| Shadow | `80 MHz` | `80 MHz` |
+| Dark | `80 MHz` | `80 MHz` |
+| Unknown | `80 MHz` | `80 MHz` |
+
 Shadow-mode battery-saver timings:
-- CPU clock: `80 MHz`
+- CPU clock: `80 MHz` between radio bursts and while WiFi/AP is active
+- display contrast: `24`
 - display redraw heartbeat: `60000 ms`
 - healthy display presence probe: `300000 ms`
 - offline display retry: `60000 ms`
@@ -75,6 +95,7 @@ Shadow-mode battery-saver timings:
 - sensor/display maintenance pass: `60000 ms`
 
 Sun-mode timing changes:
+- CPU clock: `160 MHz`
 - display contrast: `255`
 - display redraw heartbeat: `15000 ms`
 - sensor sampling: `5000 ms`
@@ -82,38 +103,70 @@ Sun-mode timing changes:
 - sensor/display maintenance pass: `30000 ms`
 
 Dark-mode behavior:
-- display contrast is reduced during the initial dark grace period
+- CPU clock: `80 MHz`
+- display contrast is reduced to `16` during the initial dark grace period
 - sensor sampling, wind polling, display heartbeat, and maintenance slow to `60000 ms`
-- after `4 h` continuously in dark mode, all OLEDs are placed in power-save mode and the ESP32 enters deep sleep
+- after `2 h` continuously in dark mode, all OLEDs are placed in power-save mode and the ESP32 enters deep sleep
 - deep sleep wake interval is `10 min`
-- on timer wake, the firmware reads INA219 #1 before initializing displays; if solar voltage is still dark, it immediately sleeps again unless a 30-minute server post is due
+- on timer wake, the firmware reads INA219 #1 before initializing displays, retrying transient invalid solar samples up to 3 times; if solar voltage is still dark, it immediately sleeps again unless a 30-minute server post is due
 - if solar voltage wakes into shadow or sun, normal display and polling behavior resumes
 - if INA219 #1 is offline or invalid, the firmware does not enter solar-triggered deep sleep
 
 Display behavior in this profile:
-- OLEDs redraw only when their value changed by a meaningful threshold
-- OLED brightness follows the solar mode: maximum in sun, reduced in shadow, lower during the dark grace period, then off in deep sleep
-- each refresh wakes only the affected displays instead of sweeping all 9 panels
+- OLEDs redraw when their value changed by a meaningful threshold, plus a forced heartbeat redraw that keeps quiet panels visible
+- OLED brightness follows the solar mode: maximum in sun, very low in shadow, lower during the dark grace period, then off in deep sleep
+- the OLED layout intentionally minimizes white pixels: no filled backgrounds, frames, bars, or decorative separators in the panel renderer
+- telemetry changes wake only the affected displays; the heartbeat intentionally sweeps all online displays
 
-Thresholds are configurable in `include/board_config.h` for solar mode, sleep timing, temperature, humidity, pressure, wind, power, voltage, and battery percentage.
+Thresholds are configurable in `include/board_config.h` for solar mode, sleep timing, temperature, humidity, pressure, wind, power, voltage, and battery percentage. Battery percentage uses a 4S Li-ion voltage curve with adjustable 0%/100% bounds in the admin UI.
+Battery lockout enter/resume voltages and wake interval also have compile-time defaults in `include/board_config.h` and are adjustable in the admin UI.
 
 ## WiFi, Web UI, And Posting
 
 The firmware includes a solar-aware WiFi stack with SPIFFS-hosted web UI and web OTA.
 
-Solar mode policy:
-- **Sun mode:** WiFi stays on, the station AP stays on, the web UI is available, and STA connects to the configured WiFi when credentials exist
-- **Shadow mode:** WiFi is normally off and wakes only for configured server posts every `10 min`
-- **Dark mode before deep sleep:** WiFi is normally off and wakes only for configured server posts every `30 min`
-- **Dark timer wake from deep sleep:** the station reads solar first; if still dark, it posts only on the configured 30-minute cadence, then returns to deep sleep
+Solar mode network policy:
+- In normal configured use, WiFi and the setup AP stay off between scheduled network bursts in every solar mode, including sun mode.
+- A network burst starts only for a configured server post, a manual local **Post Now**, or local setup/admin use while the setup AP is intentionally active.
+- During a post burst, the station sends telemetry, pulls remote config if due, checks firmware/SPIFFS if due, then turns STA/AP radios off again unless **Debug AP always** is enabled.
+- A failed scheduled post is retried after `min(interval / 4, 60000 ms)`; successful posts wait for the full mode interval.
+- **Sun mode:** posts use the sun interval, `10 min` by default.
+- **Shadow mode:** posts use the shadow interval, `10 min` by default.
+- **WiFi recovery (non-dark):** if a scheduled post cannot connect to the saved station WiFi, the setup AP is exposed for `10 min` so WiFi settings can be repaired locally. The recovery AP is limited to `3` consecutive recovery windows, then re-arms after `10 min` or immediately after a successful station connection; it is never used in dark mode.
+- **Dark mode before deep sleep:** posts use the dark interval, `30 min` by default.
+- **Dark timer wake from deep sleep:** the station reads solar first; if still dark, it posts only on the configured dark cadence, takes a one-shot RS485 wind sample, performs any due remote management in the same WiFi session, then returns to deep sleep. If that dark-wake post fails, the wake counter is rolled back so the next timer wake retries the missed slot.
 
-Debug override:
-- `BoardConfig::kWifiDebugForceApAlways` keeps the setup AP available in every solar mode while the ESP32 is awake. Deep sleep still powers WiFi down.
+Debug AP:
+- `BoardConfig::kWifiDebugForceApAlways` is the default for the runtime **Debug AP always** setting.
+- The default is `false` for power savings.
+- When enabled, the setup AP stays available in every solar mode while the ESP32 is awake. Deep sleep still powers WiFi down.
+- When disabled, the setup AP is off between network bursts once station WiFi credentials are configured.
+- If no station WiFi SSID is configured, the setup AP stays on while awake so the station can still be provisioned.
+
+WiFi settings:
+- Leaving the station WiFi password field blank keeps the saved password.
+- To use an open upstream WiFi network, check **Open network** in the WiFi settings; scan results marked `OPEN` select this automatically and clear any saved password.
+- **Debug AP always** can be toggled locally or from the remote website config.
+- **Clear WiFi Cache** clears the saved upstream SSID/password and asks the ESP32 WiFi driver to erase cached STA credentials.
+- The dashboard status prefers `STA` when the ESP32 is connected to an upstream WiFi network, even if the setup AP is also active.
+
+Remote website management:
+- The station derives the website origin from `postUrl` and authenticates device calls with `postToken`.
+- Remote config is fetched from `/api/device/config` only during an already scheduled post WiFi session; the `600000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
+- Firmware/SPIFFS update checks are fetched from `/api/device/firmware?version=<firmware>&spiffs=<spiffs>` only during an already scheduled post WiFi session; the `3600000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
+- Remote config can update solar thresholds, sleep/post intervals, battery percentage bounds, battery lockout thresholds/wake interval, `serverPostEnabled`, **Debug AP always**, and the remote pull/check intervals.
+- Changing `serverPostDarkMs` or `solarDeepSleepWakeMs` resets the dark-wake counter so the next dark post cadence starts cleanly.
+- Remote config does not accept WiFi credentials, post tokens, or admin passwords.
+- If the website firmware manifest is enabled and has a version different from `BoardConfig::kFirmwareVersion`, the station downloads the binary URL, adds the bearer token for URLs on the configured website origin, checks size/SHA-256 when provided, installs with OTA, and reboots.
+- If the website SPIFFS manifest is enabled and has a version different from the stored SPIFFS version, the station downloads the SPIFFS image, adds the bearer token for URLs on the configured website origin, checks size/SHA-256 when provided, installs it with OTA, stores the new SPIFFS version, and reboots.
+- Posted telemetry includes the current firmware version, SPIFFS version, and remote-configurable settings so the website admin page can show current station values and update status.
+- Dark timer wake remains burst-only: if the station wakes from deep sleep in dark mode, it posts when due, runs any due remote management in that same WiFi session, and returns to sleep.
 
 Default AP:
 - SSID: `WeatherStation-AP`
 - Open network, no password
 - Captive DNS redirects connected clients to the local dashboard where supported by the phone/computer OS
+- The AP is normally available only while no upstream station WiFi SSID is configured, or when **Debug AP always** is enabled.
 
 Default admin password: `admin`.
 
@@ -122,11 +175,12 @@ Web routes:
 - `/api/status` — public JSON telemetry
 - `/api/admin/config` — password-protected settings GET/POST
 - `/api/admin/wifi-scan` — password-protected WiFi scan
+- `/api/admin/wifi-clear-cache` — password-protected clear of saved station WiFi SSID/password plus ESP32 STA cache reset
 - `/api/admin/post-now` — password-protected manual telemetry POST
 - `/api/ota/upload` — password-protected firmware OTA
 - `/api/ota/upload-spiffs` — password-protected SPIFFS OTA
 
-Settings saved to flash include solar thresholds, sleep/post intervals, WiFi credentials, server POST URL/token, and admin password. Compile-time defaults remain in `include/board_config.h` and are used when flash settings are missing or invalid.
+Settings saved to the ESP32 NVS partition include solar thresholds, battery percentage thresholds, battery lockout thresholds/wake interval, sleep/post intervals, remote management intervals, Debug AP always, WiFi credentials, server POST URL/token, SPIFFS version, and admin password. Normal firmware OTA, SPIFFS OTA, and `pio run -t upload` do not erase NVS. A full chip erase, `pio run -t erase`, or **Clear WiFi Cache** removes saved WiFi credentials. Compile-time defaults remain in `include/board_config.h` and are used when flash settings are missing or invalid, while the invalid-settings repair path preserves WiFi credentials, post URL/token, SPIFFS version, and admin password.
 
 ## Display Layout — 9 Screens
 
@@ -166,7 +220,8 @@ Both on dedicated hardware sensor bus 5 (no display traffic):
 - **#2** at `0x40` — battery power monitor
 - Reads: bus voltage, shunt voltage, current, power
 - Each INA219 is put into power-save mode between samples
-- Battery percentage is derived from INA219 #2 load voltage with a configurable linear mapping in `include/board_config.h`
+- Battery percentage is derived from INA219 #2 load voltage with a 4S Li-ion voltage curve. Defaults are `12.00 V` for 0% and `16.80 V` for 100%; runtime bounds can be adjusted in the admin UI.
+- Battery lockout also uses INA219 #2 load voltage. A low-voltage runtime cutoff powers the OLEDs down and puts the ESP32 into deep sleep; boot and timer wakes stay asleep until the configured resume voltage is reached.
 - If an INA219 drops off the bus, it is marked offline and retried automatically by the maintenance task
 
 ### RS485 Wind Sensors
@@ -227,7 +282,7 @@ Libraries:
 - Display buses 0–4 are software I2C, so display refresh is slower than a pure hardware-I2C design.
 - Display disconnect detection is intentionally slow in the current battery-saver profile. Healthy panels are reprobed every `300000 ms`, while offline panels are retried every `60000 ms`.
 - Sensor reconnect is periodic, not instantaneous. In the current battery-saver profile, offline sensors are retried every `60000 ms`.
-- Battery percentage is only as accurate as the configured empty/full voltage thresholds in `include/board_config.h`.
+- Battery percentage is an estimate from pack voltage, so it will move with load and recovery. It is only as accurate as the configured 0%/100% voltage bounds.
 - `GPIO16`/`GPIO17` are used for RS485 UART only — no longer shared with I2C bus 3 (bus 3 now uses GPIO 5/18).
 - Some third-party 128×128 OLED modules marked as 3.3 V behave more reliably from 5 V.
 - The OTA partition table gives each firmware slot `0x140000` bytes; current firmware fits, but feature growth should watch flash usage.

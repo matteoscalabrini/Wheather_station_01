@@ -16,6 +16,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <mbedtls/sha256.h>
 
 #include "app_types.h"
 #include "board_config.h"
@@ -85,6 +86,9 @@ extern bool gDarkWakePostOnly;
 extern bool gDarkWakePostDue;
 extern bool gDarkTimerWakeEvaluated;
 extern uint32_t gDarkTimerWakeCount;
+extern uint8_t gRecoveryApConsecutiveLaunches;
+extern uint32_t gRecoveryApLastEndMs;
+extern bool gBatteryLockoutLatched;
 extern RuntimeSettings gSettings;
 extern NetworkRuntimeState gNetworkRuntime;
 extern OtaUploadState gOtaUpload;

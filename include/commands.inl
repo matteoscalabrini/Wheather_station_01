@@ -56,6 +56,11 @@ static void printStatus() {
         snapshot.batteryOnline ? "online" : "offline", BoardConfig::kIna219_2_Address,
         snapshot.battery.powerW, snapshot.battery.loadVoltageV,
         batteryPercent);
+    Serial.printf("  battery lock:  %s enter<=%.2fV resume>=%.2fV wake=%lums\n",
+        gBatteryLockoutLatched ? "latched" : "armed",
+        gSettings.batteryLockoutEnterVoltageV,
+        gSettings.batteryLockoutResumeVoltageV,
+        (unsigned long)gSettings.batteryLockoutWakeMs);
     Serial.printf("  rs485:         baud=%lu fmt=%s inv=%s\n",
         (unsigned long)gRs485BaudActive, rs485ConfigLabel(gRs485SerialConfigActive),
         gRs485InvertActive ? "on" : "off");

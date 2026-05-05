@@ -11,7 +11,12 @@ static void giveMutex(SemaphoreHandle_t mutex) {
 }
 
 static bool hasElapsedMs(uint32_t nowMs, uint32_t sinceMs, uint32_t intervalMs) {
+    // sinceMs == 0 is the "fire on first call" sentinel, not a real timestamp.
     return intervalMs == 0 || sinceMs == 0 || (uint32_t)(nowMs - sinceMs) >= intervalMs;
+}
+
+static bool hasReachedMs(uint32_t nowMs, uint32_t targetMs) {
+    return targetMs == 0 || (int32_t)(nowMs - targetMs) >= 0;
 }
 
 static void requestDisplayRefresh(uint32_t mask) {
@@ -169,11 +174,67 @@ static ForecastState computeForecast(const WeatherSample &weather, uint32_t nowM
     return classifyForecast(weather.pressureHpa - reference.pressureHpa, weather);
 }
 
+struct BatterySocPoint {
+    float voltagePerCell;
+    float percent;
+};
+
+static float interpolateBatterySocFrom4sLiIon(float voltageV) {
+    // 4S Li-ion OCV->SOC anchor points tuned from public NCR18650B POCV data
+    // (92 cells, 25 C, 0.05C charge/discharge traces averaged).
+    // Source dataset: https://zenodo.org/records/8369275
+    static constexpr BatterySocPoint kLiIonSocCurve[] = {
+        {3.00f, 0.0f},
+        {3.30f, 5.0f},
+        {3.35f, 10.0f},
+        {3.42f, 15.0f},
+        {3.48f, 20.0f},
+        {3.53f, 25.0f},
+        {3.56f, 30.0f},
+        {3.59f, 35.0f},
+        {3.61f, 40.0f},
+        {3.64f, 45.0f},
+        {3.68f, 50.0f},
+        {3.73f, 55.0f},
+        {3.78f, 60.0f},
+        {3.83f, 65.0f},
+        {3.87f, 70.0f},
+        {3.91f, 75.0f},
+        {3.95f, 80.0f},
+        {4.01f, 85.0f},
+        {4.06f, 90.0f},
+        {4.11f, 95.0f},
+        {4.20f, 100.0f},
+    };
+
+    if (BoardConfig::kBatterySeriesCells == 0) return -1.0f;
+    const float cellV = voltageV / (float)BoardConfig::kBatterySeriesCells;
+    if (!isfinite(cellV)) return -1.0f;
+
+    if (cellV <= kLiIonSocCurve[0].voltagePerCell) return 0.0f;
+    const uint8_t lastIndex = (sizeof(kLiIonSocCurve) / sizeof(kLiIonSocCurve[0])) - 1U;
+    if (cellV >= kLiIonSocCurve[lastIndex].voltagePerCell) return 100.0f;
+
+    for (uint8_t i = 1; i <= lastIndex; ++i) {
+        const BatterySocPoint &lower = kLiIonSocCurve[i - 1U];
+        const BatterySocPoint &upper = kLiIonSocCurve[i];
+        if (cellV > upper.voltagePerCell) continue;
+        const float spanV = upper.voltagePerCell - lower.voltagePerCell;
+        if (spanV <= 0.0f) return lower.percent;
+        const float t = (cellV - lower.voltagePerCell) / spanV;
+        return lower.percent + (t * (upper.percent - lower.percent));
+    }
+
+    return 100.0f;
+}
+
 static float computeBatteryPercent(float voltageV) {
-    const float emptyV = BoardConfig::kBatteryPercentEmptyVoltageV;
-    const float fullV = BoardConfig::kBatteryPercentFullVoltageV;
+    const float emptyV = gSettings.batteryPercentEmptyVoltageV;
+    const float fullV = gSettings.batteryPercentFullVoltageV;
     if (fullV <= emptyV) return -1.0f;
-    return clampPercent((voltageV - emptyV) * 100.0f / (fullV - emptyV));
+    if (voltageV <= emptyV) return 0.0f;
+    if (voltageV >= fullV) return 100.0f;
+    return clampPercent(interpolateBatterySocFrom4sLiIon(voltageV));
 }
 
 static float normalizeRelativeWindDeg(float directionDeg) {
@@ -282,6 +343,7 @@ static uint16_t powerDisplayMaskForChange(const TelemetryState &previous,
 
     if (batteryOnline != previous.batteryOnline ||
         floatDelta(batteryPercent, previous.batteryPercent) >= BoardConfig::kDisplayBatteryPercentDeltaPct ||
+        floatDelta(battery.powerW, previous.battery.powerW) >= BoardConfig::kDisplayPowerDeltaW ||
         floatDelta(battery.loadVoltageV, previous.battery.loadVoltageV) >= BoardConfig::kDisplayVoltageDeltaV) {
         mask |= (1U << 8);
     }

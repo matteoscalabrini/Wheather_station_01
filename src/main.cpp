@@ -86,6 +86,9 @@ bool gDarkWakePostOnly = false;
 bool gDarkWakePostDue = false;
 bool gDarkTimerWakeEvaluated = false;
 RTC_DATA_ATTR uint32_t gDarkTimerWakeCount = 0;
+RTC_DATA_ATTR uint8_t gRecoveryApConsecutiveLaunches = 0;
+RTC_DATA_ATTR uint32_t gRecoveryApLastEndMs = 0;
+RTC_DATA_ATTR bool gBatteryLockoutLatched = false;
 RuntimeSettings gSettings = {};
 NetworkRuntimeState gNetworkRuntime = {};
 OtaUploadState gOtaUpload = {};
@@ -113,16 +116,20 @@ void setup() {
                 (unsigned long)getCpuFrequencyMhz());
         }
     }
+    WiFi.persistent(false);
+    WiFi.setAutoReconnect(false);
+    WiFi.mode(WIFI_OFF);
     taskDelayMs(250);
 
     gTelemetryMutex = xSemaphoreCreateMutex();
     gDisplayBusMutex = xSemaphoreCreateMutex();
     gSensorBusMutex = xSemaphoreCreateMutex();
     gBootedFromTimerWake = esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER;
+
     loadRuntimeSettings();
     if (!validRuntimeSettings()) {
-        Serial.println("Settings invalid; reverting to defaults");
-        loadDefaultRuntimeSettings();
+        Serial.println("Settings invalid; repairing runtime values while preserving identity settings");
+        repairRuntimeSettingsPreservingIdentity();
         saveRuntimeSettings();
     }
 
@@ -130,24 +137,41 @@ void setup() {
     Wire.begin(BoardConfig::kI2c5Sda, BoardConfig::kI2c5Scl);
     Wire.setClock(100000UL);
 
-    gTelemetry.bme280Address = detectBme280Address(Wire);
-    if (gTelemetry.bme280Address) {
-        gTelemetry.bme280Online = beginBme280OnBus(gTelemetry.bme280Address, gTelemetry.weather);
-    }
-
-    if (probeHardwareI2c(Wire, BoardConfig::kIna219_1_Address)) {
-        gTelemetry.solarOnline = beginIna219OnBus(gIna219Solar, gTelemetry.solar);
-    }
-
     if (probeHardwareI2c(Wire, BoardConfig::kIna219_2_Address)) {
         gTelemetry.batteryOnline = beginIna219OnBus(gIna219Battery, gTelemetry.battery);
         if (gTelemetry.batteryOnline) {
             gTelemetry.batteryPercent = computeBatteryPercent(gTelemetry.battery.loadVoltageV);
         }
     }
+    updateBatteryLockoutPolicy(gTelemetry.battery, gTelemetry.batteryOnline, true);
     giveMutex(gSensorBusMutex);
 
+    if (gTelemetry.batteryOnline) {
+        gTelemetry.batteryPercent = computeBatteryPercent(gTelemetry.battery.loadVoltageV);
+    }
+
+    takeMutex(gSensorBusMutex);
+    if (probeHardwareI2c(Wire, BoardConfig::kIna219_1_Address)) {
+        if (gIna219Solar.begin(&Wire)) {
+            gTelemetry.solar = gBootedFromTimerWake ?
+                readPowerWithRetries(gIna219Solar, 3U, 20UL) : readPower(gIna219Solar);
+            gTelemetry.solarOnline = isPowerSampleValid(gTelemetry.solar);
+        }
+    }
+    giveMutex(gSensorBusMutex);
+
+    updateBatteryLockoutPolicy(gTelemetry.battery, gTelemetry.batteryOnline, false);
     updateSolarPowerPolicy(gTelemetry.solar, gTelemetry.solarOnline);
+
+    if (!gDarkWakePostOnly) {
+        takeMutex(gSensorBusMutex);
+        gTelemetry.bme280Address = detectBme280Address(Wire);
+        if (gTelemetry.bme280Address) {
+            gTelemetry.bme280Online = beginBme280OnBus(gTelemetry.bme280Address, gTelemetry.weather);
+        }
+        giveMutex(gSensorBusMutex);
+    }
+
     initializeNetworkRuntime();
 
     if (!gDarkWakePostOnly) {
@@ -164,15 +188,13 @@ void setup() {
         gTelemetry.forecast = computeForecast(gTelemetry.weather, nowMs);
     }
 
-    if (!gDarkWakePostOnly) {
-        initRs485();
-        {
-            bool speedOnline = false;
-            bool dirOnline = false;
-            gTelemetry.wind = pollWindSensors(speedOnline, dirOnline);
-            gTelemetry.windSpeedOnline = speedOnline;
-            gTelemetry.windDirOnline = dirOnline;
-        }
+    initRs485();
+    {
+        bool speedOnline = false;
+        bool dirOnline = false;
+        gTelemetry.wind = pollWindSensors(speedOnline, dirOnline);
+        gTelemetry.windSpeedOnline = speedOnline;
+        gTelemetry.windDirOnline = dirOnline;
     }
 
     Serial.printf("\n%s Weather Station\n", BoardConfig::kBoardName);

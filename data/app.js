@@ -2,6 +2,7 @@ const grid = document.querySelector("#displayGrid");
 const solarMode = document.querySelector("#solarMode");
 const wifiState = document.querySelector("#wifiState");
 const postState = document.querySelector("#postState");
+const remoteState = document.querySelector("#remoteState");
 const menuButton = document.querySelector("#menuButton");
 const menuPanel = document.querySelector("#menuPanel");
 const dashboardView = document.querySelector("#dashboardView");
@@ -14,7 +15,11 @@ const configForm = document.querySelector("#configForm");
 const scanWifi = document.querySelector("#scanWifi");
 const scanStatus = document.querySelector("#scanStatus");
 const networkList = document.querySelector("#networkList");
+const wifiHint = document.querySelector("#wifiHint");
+const clearWifiPassword = document.querySelector("#clearWifiPassword");
+const clearWifiCache = document.querySelector("#clearWifiCache");
 const postNow = document.querySelector("#postNow");
+const postHint = document.querySelector("#postHint");
 const otaForm = document.querySelector("#otaForm");
 const fsOtaForm = document.querySelector("#fsOtaForm");
 let password = "";
@@ -46,6 +51,47 @@ function rssiToStrength(rssi) {
   return 1;
 }
 
+function prettyState(value) {
+  return String(value || "--").replace(/_/g, " ").toUpperCase();
+}
+
+function elapsedSince(nowMs, eventMs) {
+  if (!nowMs || !eventMs) return "";
+  const age = Math.max(0, Math.floor((nowMs - eventMs) / 1000));
+  if (age < 60) return `${age}s ago`;
+  const minutes = Math.floor(age / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ago`;
+}
+
+function setHint(element, text, state = "") {
+  if (!element) return;
+  element.textContent = text;
+  element.classList.toggle("connected", state === "connected");
+  element.classList.toggle("warn", state === "warn");
+  element.classList.toggle("bad", state === "bad");
+}
+
+function setWifiHint(text, state = "") {
+  setHint(wifiHint, text, state);
+}
+
+function setPostHint(text, state = "") {
+  setHint(postHint, text, state);
+}
+
+function updateWifiPasswordMode() {
+  if (!clearWifiPassword || !configForm?.elements.wifiPassword) return;
+  const passwordField = configForm.elements.wifiPassword;
+  passwordField.disabled = clearWifiPassword.checked;
+  if (clearWifiPassword.checked) {
+    passwordField.value = "";
+    passwordField.placeholder = "open network";
+  } else {
+    passwordField.placeholder = "leave blank to keep";
+  }
+}
+
 function renderNetworkList(networks) {
   networkList.innerHTML = "";
   if (!networks || networks.length === 0) {
@@ -70,18 +116,135 @@ function renderNetworkList(networks) {
     item.querySelector(".net-connect").addEventListener("click", () => {
       configForm.elements.wifiSsid.value = net.ssid || "";
       configForm.elements.wifiPassword.value = "";
-      configForm.elements.wifiPassword.focus();
+      if (clearWifiPassword) {
+        clearWifiPassword.checked = !net.secure;
+        updateWifiPasswordMode();
+      }
+      if (net.secure) {
+        configForm.elements.wifiPassword.focus();
+      } else {
+        scanStatus.textContent = `${ssid} selected as open network`;
+      }
     });
     networkList.appendChild(item);
   });
 }
 
+function renderWifiStatus(data) {
+  const wifi = data.wifi || {};
+  const mode = String(data.solarMode || "").toLowerCase();
+  const target = wifi.targetSsid || "";
+  const message = prettyState(wifi.message || wifi.statusLabel);
+
+  if (wifi.sta) {
+    wifiState.textContent = `STA ${wifi.ip}`;
+    const ssid = wifi.ssid || target || "WiFi";
+    const rssi = wifi.rssi ? ` RSSI ${wifi.rssi} dBm` : "";
+    setWifiHint(`Connected to ${ssid} at ${wifi.ip}.${rssi}`, "connected");
+    return;
+  }
+
+  if (wifi.enabled && target && (wifi.message === "wifi_connecting" || wifi.message === "wifi_retry_wait")) {
+    wifiState.textContent = "WIFI CONNECTING";
+    setWifiHint(`Trying ${target}. ${message}`, "warn");
+    return;
+  }
+
+  if (wifi.recoveryAp && wifi.ap) {
+    const minutes = Math.max(1, Math.ceil(Number(wifi.recoveryApRemainingMs || 0) / 60000));
+    wifiState.textContent = `AP ${wifi.apIp}`;
+    setWifiHint(`Recovery AP active for ${minutes}m after ${target} was unreachable. Update WiFi settings or use Post Now to test.`, "bad");
+    return;
+  }
+
+  if (target && (mode === "shadow" || mode === "dark")) {
+    wifiState.textContent = wifi.ap ? `AP ${wifi.apIp}` : "STA IDLE";
+    setWifiHint(`Saved ${target}. Station WiFi is idle in ${mode} mode until a post is due. ${message}`, "warn");
+    return;
+  }
+
+  if (target) {
+    wifiState.textContent = wifi.enabled ? "WIFI WAIT" : "WIFI SAVED";
+    setWifiHint(`Saved ${target}. ${message}`, wifi.message === "wifi_connect_timeout" ? "bad" : "warn");
+    return;
+  }
+
+  if (wifi.ap) {
+    wifiState.textContent = `AP ${wifi.apIp}`;
+    setWifiHint(`Setup AP active at ${wifi.apIp}. No station WiFi saved.`, "warn");
+    return;
+  }
+
+  wifiState.textContent = wifi.enabled ? "WIFI ON" : "WIFI OFF";
+  setWifiHint(wifi.enabled ? `WiFi enabled. ${message}` : "WiFi is off.");
+}
+
+function renderPostStatus(data) {
+  const wifi = data.wifi || {};
+  const code = Number(wifi.lastPostCode || 0);
+  const message = wifi.lastPostMessage || "idle";
+  const age = elapsedSince(Number(data.uptimeMs || 0), Number(wifi.lastPostSuccessMs || 0));
+
+  if (wifi.posting) {
+    postState.textContent = "POST SENDING";
+    setPostHint(`Post in progress. ${prettyState(message)}`, "warn");
+    return;
+  }
+
+  if (message === "post_ok") {
+    postState.textContent = `POST OK ${code || ""}`.trim();
+    setPostHint(`Last post succeeded${age ? ` ${age}` : ""}. HTTP ${code}.`, "connected");
+    return;
+  }
+
+  if (message && message !== "idle") {
+    postState.textContent = code ? `POST ${code}` : "POST FAILED";
+    const detail = code ? ` HTTP ${code}.` : "";
+    setPostHint(`${prettyState(message)}.${detail}`, "bad");
+    return;
+  }
+
+  postState.textContent = "POST IDLE";
+  setPostHint("No post attempted yet.");
+}
+
+function renderRemoteStatus(data) {
+  const wifi = data.wifi || {};
+  const configMessage = wifi.remoteConfigMessage || "idle";
+  const firmwareMessage = wifi.firmwareMessage || "idle";
+  const active = [
+    "remote_config_fetching",
+    "firmware_checking",
+    "firmware_downloading",
+    "firmware_rebooting",
+    "spiffs_downloading",
+    "spiffs_rebooting"
+  ];
+  const ok = ["remote_config_saved", "remote_config_current", "remote_config_empty", "firmware_current"];
+
+  if (active.includes(configMessage) || active.includes(firmwareMessage)) {
+    remoteState.textContent = `REMOTE ${prettyState(firmwareMessage !== "idle" ? firmwareMessage : configMessage)}`;
+    return;
+  }
+  if (firmwareMessage.includes("failed") || firmwareMessage.includes("mismatch") ||
+      firmwareMessage.includes("missing") || firmwareMessage.includes("unauthorized") ||
+      configMessage.includes("failed") || configMessage.includes("invalid") ||
+      configMessage.includes("unauthorized")) {
+    remoteState.textContent = "REMOTE CHECK";
+    return;
+  }
+  if (ok.includes(configMessage) || ok.includes(firmwareMessage)) {
+    remoteState.textContent = "REMOTE OK";
+    return;
+  }
+  remoteState.textContent = "REMOTE IDLE";
+}
+
 function renderStatus(data) {
   solarMode.textContent = `MODE ${String(data.solarMode || "--").toUpperCase()}`;
-  wifiState.textContent = data.wifi?.ap ? `AP ${data.wifi.apIp}` :
-    data.wifi?.sta ? `STA ${data.wifi.ip}` : "WIFI OFF";
-  postState.textContent = data.wifi?.lastPostMessage ?
-    `POST ${data.wifi.lastPostMessage}` : "POST --";
+  renderWifiStatus(data);
+  renderPostStatus(data);
+  renderRemoteStatus(data);
 
   grid.innerHTML = "";
   (data.displays || []).forEach((item) => {
@@ -116,7 +279,11 @@ async function refreshStatus() {
     const response = await fetch("/api/status", { cache: "no-store" });
     renderStatus(await response.json());
   } catch {
+    wifiState.textContent = "LINK LOST";
+    setWifiHint("Dashboard cannot reach the device.", "bad");
     postState.textContent = "LINK LOST";
+    setPostHint("Dashboard cannot reach the device.", "bad");
+    remoteState.textContent = "LINK LOST";
   }
 }
 
@@ -135,6 +302,10 @@ async function loadConfig() {
     if (field.type === "checkbox") field.checked = !!value;
     else field.value = value ?? "";
   }
+  if (clearWifiPassword) {
+    clearWifiPassword.checked = Boolean(config.wifiSsid) && !config.wifiPasswordSet;
+    updateWifiPasswordMode();
+  }
 }
 
 loginForm.addEventListener("submit", async (event) => {
@@ -151,19 +322,31 @@ loginForm.addEventListener("submit", async (event) => {
 
 configForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  adminState.textContent = "Saving...";
+  setWifiHint("Saving WiFi/settings changes...", "warn");
   const params = withPassword(new URLSearchParams());
   for (const element of configForm.elements) {
     if (!element.name) continue;
     if (element.type === "checkbox") params.set(element.name, element.checked ? "1" : "0");
     else if (element.value !== "") params.set(element.name, element.value);
   }
-  const response = await fetch("/api/admin/config", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: params
-  });
-  adminState.textContent = response.ok ? "Saved" : "Save failed";
-  if (response.ok) await loadConfig();
+  try {
+    const response = await fetch("/api/admin/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: params
+    });
+    adminState.textContent = response.ok ? "Saved" : "Save failed";
+    if (response.ok) {
+      await loadConfig();
+      await refreshStatus();
+    } else {
+      setWifiHint("Settings save failed.", "bad");
+    }
+  } catch {
+    adminState.textContent = "Save error";
+    setWifiHint("Settings save request failed.", "bad");
+  }
 });
 
 scanWifi.addEventListener("click", async () => {
@@ -189,13 +372,56 @@ scanWifi.addEventListener("click", async () => {
 });
 
 postNow.addEventListener("click", async () => {
-  const response = await fetch("/api/admin/post-now", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: withPassword()
-  });
-  postState.textContent = response.ok ? "POST REQUESTED" : "POST FAILED";
-  await refreshStatus();
+  postNow.disabled = true;
+  postState.textContent = "POST SENDING";
+  setPostHint("Connecting WiFi and sending telemetry now...", "warn");
+  try {
+    const response = await fetch("/api/admin/post-now", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: withPassword()
+    });
+    const data = await response.json();
+    if (data.telemetry || data.displays) renderStatus(data.telemetry || data);
+    if (!response.ok) {
+      postState.textContent = "POST FAILED";
+      setPostHint(`Manual post failed. ${prettyState(data.wifi?.lastPostMessage || data.error || "post_failed")}.`, "bad");
+    }
+  } catch {
+    postState.textContent = "POST ERROR";
+    setPostHint("Manual post request failed.", "bad");
+  } finally {
+    postNow.disabled = false;
+    await refreshStatus();
+  }
+});
+
+clearWifiCache?.addEventListener("click", async () => {
+  if (!confirm("Clear saved station WiFi SSID/password and reset WiFi cache?")) return;
+  clearWifiCache.disabled = true;
+  scanStatus.textContent = "Clearing WiFi cache...";
+  setWifiHint("Clearing saved station WiFi and driver cache...", "warn");
+  try {
+    const response = await fetch("/api/admin/wifi-clear-cache", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: withPassword()
+    });
+    if (!response.ok) throw new Error("clear_failed");
+    configForm.elements.wifiSsid.value = "";
+    configForm.elements.wifiPassword.value = "";
+    if (clearWifiPassword) clearWifiPassword.checked = false;
+    updateWifiPasswordMode();
+    networkList.innerHTML = "";
+    scanStatus.textContent = "WiFi cache cleared";
+    await loadConfig();
+    await refreshStatus();
+  } catch {
+    scanStatus.textContent = "Clear failed";
+    setWifiHint("WiFi cache clear failed.", "bad");
+  } finally {
+    clearWifiCache.disabled = false;
+  }
 });
 
 async function uploadOta(fileInputId, endpoint, stateSelector) {
@@ -229,5 +455,7 @@ fsOtaForm.addEventListener("submit", (event) => {
   uploadOta("#fsOtaFile", "/api/ota/upload-spiffs", "#fsOtaState");
 });
 
+clearWifiPassword?.addEventListener("change", updateWifiPasswordMode);
+updateWifiPasswordMode();
 refreshStatus();
 setInterval(refreshStatus, 5000);

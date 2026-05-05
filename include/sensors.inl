@@ -30,6 +30,18 @@ static PowerSample readPower(Adafruit_INA219 &ina) {
     return sample;
 }
 
+static PowerSample readPowerWithRetries(Adafruit_INA219 &ina, uint8_t attempts,
+                                        uint32_t gapMs) {
+    if (attempts == 0) return invalidPowerSample();
+
+    for (uint8_t attempt = 0; attempt < attempts; ++attempt) {
+        const PowerSample sample = readPower(ina);
+        if (isPowerSampleValid(sample)) return sample;
+        if ((uint8_t)(attempt + 1U) < attempts) taskDelayMs(gapMs);
+    }
+    return invalidPowerSample();
+}
+
 static uint8_t detectBme280Address(TwoWire &bus) {
     if (probeHardwareI2c(bus, BoardConfig::kBme280PrimaryAddress)) {
         return BoardConfig::kBme280PrimaryAddress;
@@ -91,6 +103,7 @@ static void maintainDisplayConnections() {
         giveMutex(gDisplayBusMutex);
 
         if (online != wasOnline) setDisplayOnline(i, online);
+        if (online && !wasOnline) applyDisplayContrastForSolarMode(gSolarLightMode, true);
         taskDelayMs(1);
     }
 }
@@ -149,5 +162,6 @@ static void maintainSensorConnections() {
 
     updateSensorSamples(weather, bmeOnline, bmeAddress, forecast, solar, solarOnline,
                         battery, batteryOnline, batteryPercent);
+    updateBatteryLockoutPolicy(battery, batteryOnline, false);
     updateSolarPowerPolicy(solar, solarOnline);
 }

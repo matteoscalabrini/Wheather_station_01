@@ -1,3 +1,5 @@
+// Shadow + dark contrast floors are aggressive; rendering must minimize white
+// pixels. No filled rectangles or bold backgrounds without an explicit reason.
 static bool displayNeedsRefresh(uint8_t index, const TelemetryState &current,
                                 const TelemetryState &previous) {
     switch (index) {
@@ -50,6 +52,8 @@ static bool displayNeedsRefresh(uint8_t index, const TelemetryState &current,
             return current.batteryOnline != previous.batteryOnline ||
                 floatDelta(current.batteryPercent, previous.batteryPercent) >=
                     BoardConfig::kDisplayBatteryPercentDeltaPct ||
+                floatDelta(current.battery.powerW, previous.battery.powerW) >=
+                    BoardConfig::kDisplayPowerDeltaW ||
                 floatDelta(current.battery.loadVoltageV, previous.battery.loadVoltageV) >=
                     BoardConfig::kDisplayVoltageDeltaV;
         default:
@@ -94,32 +98,31 @@ static void drawRightAlignedText(U8G2 &display, int16_t xRight, int16_t y, const
 }
 
 static void drawWindow(U8G2 &display, const char *title, const char *status) {
-    display.setFont(u8g2_font_5x8_tf);
+    display.setFont(u8g2_font_5x8_tr);
     display.drawStr(4, 8, title);
     drawRightAlignedText(display, display.getDisplayWidth() - 4, 8, status);
-    display.drawHLine(0, 12, 128);
 }
 
 static void drawSingleMetricDisplay(U8G2 &display, const char *title, const char *status,
                                     const char *label, const char *value) {
     drawWindow(display, title, status);
-    display.setFont(u8g2_font_6x10_tf);
-    drawCenteredText(display, 36, label);
-    display.setFont(u8g2_font_logisoso16_tf);
-    drawCenteredText(display, 76, value);
+    display.setFont(u8g2_font_5x8_tr);
+    drawCenteredText(display, 40, label);
+    display.setFont(u8g2_font_logisoso16_tr);
+    drawCenteredText(display, 72, value);
 }
 
 static void drawDualMetricDisplay(U8G2 &display, const char *title, const char *status,
                                   const char *topLabel, const char *topValue,
                                   const char *bottomLabel, const char *bottomValue) {
     drawWindow(display, title, status);
-    display.drawHLine(12, 66, 104);
-    display.setFont(u8g2_font_6x10_tf);
-    drawCenteredText(display, 32, topLabel);
-    drawCenteredText(display, 82, bottomLabel);
-    display.setFont(u8g2_font_logisoso16_tf);
-    drawCenteredText(display, 55, topValue);
-    drawCenteredText(display, 105, bottomValue);
+    display.setFont(u8g2_font_5x8_tr);
+    drawCenteredText(display, 30, topLabel);
+    display.setFont(u8g2_font_logisoso16_tr);
+    drawCenteredText(display, 64, topValue);
+    display.setFont(u8g2_font_6x10_tr);
+    drawCenteredText(display, 96, bottomLabel);
+    drawCenteredText(display, 112, bottomValue);
 }
 
 static void drawTemperature(U8G2 &display, const TelemetryState &state) {
@@ -280,7 +283,8 @@ static void renderDisplay(uint8_t index, const TelemetryState &snapshot) {
     } while (display.nextPage());
 }
 
-static void renderDisplaySlice(uint8_t index, const TelemetryState &snapshot) {
+static void renderDisplaySlice(uint8_t index, const TelemetryState &snapshot,
+                               bool forceRefresh = false) {
     takeMutex(gDisplayBusMutex);
     if (!snapshot.displayOnline[index]) {
         resetDisplayRuntimeState(index);
@@ -292,7 +296,7 @@ static void renderDisplaySlice(uint8_t index, const TelemetryState &snapshot) {
     const uint32_t nowMs = millis();
     bool shouldRefresh = true;
 
-    if (BoardConfig::kDisplayRedrawOnChangeOnly && runtime.hasRendered) {
+    if (!forceRefresh && BoardConfig::kDisplayRedrawOnChangeOnly && runtime.hasRendered) {
         shouldRefresh = displayNeedsRefresh(index, snapshot, runtime.lastRendered);
     }
 
@@ -316,16 +320,17 @@ static void renderDisplaySlice(uint8_t index, const TelemetryState &snapshot) {
     giveMutex(gDisplayBusMutex);
 }
 
-static void renderDisplayMask(uint16_t mask, const TelemetryState &snapshot) {
+static void renderDisplayMask(uint16_t mask, const TelemetryState &snapshot,
+                              bool forceRefresh = false) {
     for (uint8_t i = 0; i < kNumDisplays; ++i) {
         if ((mask & (1U << i)) == 0) continue;
-        renderDisplaySlice(i, snapshot);
+        renderDisplaySlice(i, snapshot, forceRefresh);
         taskDelayMs(1);
     }
 }
 
 static void renderDisplayFrame(const TelemetryState &snapshot) {
-    renderDisplayMask(kDisplayMaskAll, snapshot);
+    renderDisplayMask(kDisplayMaskAll, snapshot, true);
 }
 
 static uint8_t countOnlineDisplays(const TelemetryState &snapshot) {
