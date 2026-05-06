@@ -52,6 +52,38 @@ static void configureHttpClient(HTTPClient &http) {
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 }
 
+// Standardizes TLS configuration for any HTTPS request the firmware makes.
+// setInsecure() skips cert chain validation, which (a) avoids allocating a CA
+// chain buffer on every handshake and (b) sidesteps the impractical task of
+// pinning a CA for a rotating Vercel deployment cert. We authenticate with
+// our own Bearer/HMAC token instead.
+//
+// Note: arduino-esp32 v2.x does not expose mbedTLS buffer sizing on the
+// client API — the receive buffer is fixed at 16 KB by sdkconfig. If the
+// device runs out of contiguous heap for the second back-to-back TLS
+// handshake (manifest -> OTA), we surface that through the diagnostic log
+// in performHttpOtaUpdate() rather than silently retrying.
+static void configureSecureClient(WiFiClientSecure &secure) {
+    secure.setInsecure();
+    secure.setHandshakeTimeout(15);
+}
+
+// Begins an HTTP(S) request using a caller-owned client whose lifetime we
+// control. For HTTPS, uses the small-buffer WiFiClientSecure above; for HTTP,
+// uses a plain WiFiClient. Both clients must outlive `http` (declare them in
+// the same scope).
+static bool beginHttpRequest(HTTPClient &http,
+                             WiFiClientSecure &secure,
+                             WiFiClient &plain,
+                             const String &url) {
+    const bool isHttps = url.startsWith("https://") || url.startsWith("HTTPS://");
+    if (isHttps) {
+        configureSecureClient(secure);
+        return http.begin(secure, url);
+    }
+    return http.begin(plain, url);
+}
+
 struct ScopedBoolFlag {
     explicit ScopedBoolFlag(bool &target) : flag(target) {
         flag = true;
@@ -303,7 +335,8 @@ static String buildTelemetryJson() {
     payload.reserve(6144);
     payload = "{";
     payload += "\"board\":" + jsonString(BoardConfig::kBoardName) + ",";
-    payload += "\"firmwareVersion\":" + jsonString(BoardConfig::kFirmwareVersion) + ",";
+    payload += "\"firmwareVersion\":" + jsonString(gSettings.firmwareVersion) + ",";
+    payload += "\"firmwareCompiledVersion\":" + jsonString(BoardConfig::kFirmwareVersion) + ",";
     payload += "\"spiffsVersion\":" + jsonString(gSettings.spiffsVersion) + ",";
     payload += "\"uptimeMs\":" + String(millis()) + ",";
     payload += "\"cpuFrequencyMhz\":" + String(getCpuFrequencyMhz()) + ",";
@@ -843,7 +876,8 @@ static bool runtimeSettingsEqual(const RuntimeSettings &a, const RuntimeSettings
         strcmp(a.wifiPassword, b.wifiPassword) == 0 &&
         strcmp(a.postUrl, b.postUrl) == 0 &&
         strcmp(a.postToken, b.postToken) == 0 &&
-        strcmp(a.spiffsVersion, b.spiffsVersion) == 0;
+        strcmp(a.spiffsVersion, b.spiffsVersion) == 0 &&
+        strcmp(a.firmwareVersion, b.firmwareVersion) == 0;
 }
 
 static void refreshBatteryPercentDisplayIfNeeded(const RuntimeSettings &previous) {
@@ -949,8 +983,10 @@ static bool pullRemoteConfigNow() {
     }
 
     const String endpoint = remoteBaseUrlFromPostUrl() + "/api/device/config";
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
     HTTPClient http;
-    if (!http.begin(endpoint)) {
+    if (!beginHttpRequest(http, secureClient, plainClient, endpoint)) {
         setRemoteConfigMessage("remote_config_begin_failed");
         return false;
     }
@@ -991,13 +1027,19 @@ static bool performHttpOtaUpdate(const String &urlOrPath, const String &expected
         return false;
     }
 
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
     HTTPClient http;
     String otaAttemptUrl = otaUrl;
     bool attemptedAuthFallback = false;
     int code = 0;
     bool connected = false;
     for (uint8_t attempt = 0; attempt < 3; ++attempt) {
-        if (!http.begin(otaAttemptUrl)) {
+        Serial.printf("[OTA] attempt=%u free=%u largest=%u min=%u\n",
+                      (unsigned)attempt, (unsigned)ESP.getFreeHeap(),
+                      (unsigned)ESP.getMaxAllocHeap(),
+                      (unsigned)ESP.getMinFreeHeap());
+        if (!beginHttpRequest(http, secureClient, plainClient, otaAttemptUrl)) {
             setFirmwareMessage(beginMsg);
             return false;
         }
@@ -1158,8 +1200,18 @@ static bool performHttpOtaUpdate(const String &urlOrPath, const String &expected
     }
 
     http.end();
-    if (spiffsUpdate && installedVersion != nullptr && installedVersion[0] != '\0') {
-        copySetting(gSettings.spiffsVersion, sizeof(gSettings.spiffsVersion), installedVersion);
+    // Persist the manifest's version string so the next boot reports it
+    // back to the website verbatim, even if the running binary's compiled
+    // BoardConfig::kFirmwareVersion was not bumped before publishing. Without
+    // this, a forgotten version-bump would put the device in a perpetual
+    // re-update loop (manifest says X, device reports compile-time Y, server
+    // sees X != Y, prescribes update, repeat).
+    if (installedVersion != nullptr && installedVersion[0] != '\0') {
+        if (spiffsUpdate) {
+            copySetting(gSettings.spiffsVersion, sizeof(gSettings.spiffsVersion), installedVersion);
+        } else {
+            copySetting(gSettings.firmwareVersion, sizeof(gSettings.firmwareVersion), installedVersion);
+        }
         saveRuntimeSettings();
     }
     setFirmwareMessage(rebootMsg);
@@ -1187,10 +1239,12 @@ static bool checkRemoteFirmwareNow() {
     }
 
     const String endpoint = remoteBaseUrlFromPostUrl() +
-        "/api/device/firmware?version=" + urlEncode(BoardConfig::kFirmwareVersion) +
+        "/api/device/firmware?version=" + urlEncode(gSettings.firmwareVersion) +
         "&spiffs=" + urlEncode(gSettings.spiffsVersion);
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
     HTTPClient http;
-    if (!http.begin(endpoint)) {
+    if (!beginHttpRequest(http, secureClient, plainClient, endpoint)) {
         setFirmwareMessage("firmware_check_begin_failed");
         scheduleFirmwareRetrySoon();
         return false;
@@ -1224,13 +1278,14 @@ static bool checkRemoteFirmwareNow() {
     jsonReadUIntField(payload, "firmwareSize", firmwareSize);
 
     if (firmwareUpdateAvailable && firmwareEnabled && firmwareVersion.length() &&
-        firmwareVersion != String(BoardConfig::kFirmwareVersion)) {
+        firmwareVersion != String(gSettings.firmwareVersion)) {
         if (!firmwareUrl.length()) {
             setFirmwareMessage("firmware_url_missing");
             scheduleFirmwareRetrySoon();
             return false;
         }
-        const bool ok = performHttpOtaUpdate(firmwareUrl, firmwareSha256, firmwareSize, U_FLASH, nullptr);
+        const bool ok = performHttpOtaUpdate(firmwareUrl, firmwareSha256, firmwareSize, U_FLASH,
+                                             firmwareVersion.c_str());
         if (!ok) scheduleFirmwareRetrySoon();
         return ok;
     }
@@ -1312,8 +1367,10 @@ static bool postTelemetryNow(bool keepApAfterPost) {
         return false;
     }
 
+    WiFiClientSecure secureClient;
+    WiFiClient plainClient;
     HTTPClient http;
-    if (!http.begin(String(gSettings.postUrl))) {
+    if (!beginHttpRequest(http, secureClient, plainClient, String(gSettings.postUrl))) {
         setPostMessage("post_begin_failed");
         scheduleNextPostAfterAttempt(false);
         if (!keepApAfterPost && !accessPointShouldStayOn(millis())) stopWifiIfAllowed();

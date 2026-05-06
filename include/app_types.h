@@ -111,6 +111,7 @@ struct RuntimeSettings {
     char postUrl[161];
     char postToken[97];
     char spiffsVersion[49];
+    char firmwareVersion[49];
 };
 
 struct NetworkRuntimeState {

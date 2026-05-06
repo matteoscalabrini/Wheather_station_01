@@ -11,6 +11,7 @@
 #include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 #include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>

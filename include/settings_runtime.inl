@@ -39,6 +39,8 @@ static void loadDefaultRuntimeSettings() {
     copySetting(gSettings.postToken, sizeof(gSettings.postToken), SECRET_POST_TOKEN);
     copySetting(gSettings.spiffsVersion, sizeof(gSettings.spiffsVersion),
                 BoardConfig::kSpiffsVersion);
+    copySetting(gSettings.firmwareVersion, sizeof(gSettings.firmwareVersion),
+                BoardConfig::kFirmwareVersion);
 }
 
 static void loadRuntimeSettings() {
@@ -99,6 +101,8 @@ static void loadRuntimeSettings() {
                 gSettingsPrefs.getString("postToken", gSettings.postToken));
     copySetting(gSettings.spiffsVersion, sizeof(gSettings.spiffsVersion),
                 gSettingsPrefs.getString("spiffsVer", gSettings.spiffsVersion));
+    copySetting(gSettings.firmwareVersion, sizeof(gSettings.firmwareVersion),
+                gSettingsPrefs.getString("fwVer", gSettings.firmwareVersion));
     gSettingsPrefs.end();
 }
 
@@ -132,6 +136,7 @@ static bool saveRuntimeSettings() {
     gSettingsPrefs.putString("postUrl", gSettings.postUrl);
     gSettingsPrefs.putString("postToken", gSettings.postToken);
     gSettingsPrefs.putString("spiffsVer", gSettings.spiffsVersion);
+    gSettingsPrefs.putString("fwVer", gSettings.firmwareVersion);
     gSettingsPrefs.end();
     return true;
 }
@@ -156,6 +161,7 @@ static bool validRuntimeSettings(const RuntimeSettings &settings) {
         settings.remoteConfigPullMs >= 60000UL &&
         settings.remoteFirmwareCheckMs >= 300000UL &&
         strlen(settings.spiffsVersion) > 0 &&
+        strlen(settings.firmwareVersion) > 0 &&
         strlen(settings.adminPassword) > 0;
 }
 
@@ -182,5 +188,9 @@ static void repairRuntimeSettingsPreservingIdentity() {
     if (strlen(previous.spiffsVersion) > 0) {
         copySetting(gSettings.spiffsVersion, sizeof(gSettings.spiffsVersion),
                     previous.spiffsVersion);
+    }
+    if (strlen(previous.firmwareVersion) > 0) {
+        copySetting(gSettings.firmwareVersion, sizeof(gSettings.firmwareVersion),
+                    previous.firmwareVersion);
     }
 }
