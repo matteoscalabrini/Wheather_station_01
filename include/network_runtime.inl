@@ -84,6 +84,64 @@ static bool beginHttpRequest(HTTPClient &http,
     return http.begin(plain, url);
 }
 
+// In-RAM ring buffer for diagnostic log lines. The station is field-deployed
+// in a sealed enclosure with no serial access, so the admin UI exposes these
+// lines via /api/admin/logs. Sized to 32 × 120 B so peak heap during JSON
+// serialization stays under ~6 KB. Single-task by construction: writers are
+// the network runtime / web handlers (same task as gWebServer.handleClient),
+// so no mutex is needed today. If a sensor/display task ever needs to log,
+// add a portMUX_TYPE around the writeIdx update.
+static constexpr uint8_t kLogRingEntries = 32;
+static constexpr size_t kLogRingLineLen = 120;
+static struct {
+    char lines[kLogRingEntries][kLogRingLineLen];
+    uint32_t timestamps[kLogRingEntries];
+    uint32_t totalWritten;
+    uint8_t writeIdx;
+} gLogRing = {};
+
+static void logLine(const char *fmt, ...) {
+    char buffer[kLogRingLineLen];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    const uint8_t idx = gLogRing.writeIdx;
+    gLogRing.timestamps[idx] = millis();
+    strncpy(gLogRing.lines[idx], buffer, kLogRingLineLen - 1);
+    gLogRing.lines[idx][kLogRingLineLen - 1] = '\0';
+    gLogRing.writeIdx = (idx + 1) % kLogRingEntries;
+    gLogRing.totalWritten++;
+
+    Serial.printf("[%lu ms] %s\n", (unsigned long)gLogRing.timestamps[idx], buffer);
+}
+
+static String buildLogsJson() {
+    String out;
+    out.reserve(4096);
+    out = "{\"success\":true,\"totalWritten\":";
+    out += String(gLogRing.totalWritten);
+    out += ",\"uptimeMs\":";
+    out += String(millis());
+    out += ",\"lines\":[";
+    const uint32_t available = (gLogRing.totalWritten < kLogRingEntries) ?
+        gLogRing.totalWritten : (uint32_t)kLogRingEntries;
+    const uint8_t start = (gLogRing.totalWritten < kLogRingEntries) ?
+        0 : gLogRing.writeIdx;
+    for (uint32_t i = 0; i < available; ++i) {
+        const uint8_t idx = (uint8_t)((start + i) % kLogRingEntries);
+        if (i > 0) out += ",";
+        out += "{\"t\":";
+        out += String(gLogRing.timestamps[idx]);
+        out += ",\"m\":";
+        out += jsonString(String(gLogRing.lines[idx]));
+        out += "}";
+    }
+    out += "]}";
+    return out;
+}
+
 struct ScopedBoolFlag {
     explicit ScopedBoolFlag(bool &target) : flag(target) {
         flag = true;
@@ -1035,12 +1093,13 @@ static bool performHttpOtaUpdate(const String &urlOrPath, const String &expected
     int code = 0;
     bool connected = false;
     for (uint8_t attempt = 0; attempt < 3; ++attempt) {
-        Serial.printf("[OTA] attempt=%u free=%u largest=%u min=%u\n",
-                      (unsigned)attempt, (unsigned)ESP.getFreeHeap(),
-                      (unsigned)ESP.getMaxAllocHeap(),
-                      (unsigned)ESP.getMinFreeHeap());
+        logLine("OTA attempt=%u free=%u largest=%u min=%u",
+                (unsigned)attempt, (unsigned)ESP.getFreeHeap(),
+                (unsigned)ESP.getMaxAllocHeap(),
+                (unsigned)ESP.getMinFreeHeap());
         if (!beginHttpRequest(http, secureClient, plainClient, otaAttemptUrl)) {
             setFirmwareMessage(beginMsg);
+            logLine("OTA begin_failed url=%.60s", otaAttemptUrl.c_str());
             return false;
         }
         configureHttpClient(http);
@@ -1052,6 +1111,7 @@ static bool performHttpOtaUpdate(const String &urlOrPath, const String &expected
         setFirmwareMessage(downloadMsg);
         code = http.GET();
         gNetworkRuntime.otaHttpCode = code;
+        logLine("OTA code=%d size=%d", code, http.getSize());
         if (code > 0 && code < 400) {
             connected = true;
             break;
@@ -1642,6 +1702,10 @@ static void setupWebRoutes() {
         sendJson(200, "{\"success\":true,\"message\":\"rebooting\"}");
         taskDelayMs(500);
         ESP.restart();
+    });
+    gWebServer.on("/api/admin/logs", HTTP_GET, []() {
+        if (!requireAdmin()) return;
+        sendJson(200, buildLogsJson());
     });
     gWebServer.on(
         "/api/ota/upload", HTTP_POST, handleOtaResponse,

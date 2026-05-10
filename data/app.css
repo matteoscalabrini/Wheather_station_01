@@ -431,3 +431,33 @@ label {
     font-size: .72rem;
   }
 }
+
+/* ─── Logs ──────────────────────────────────────────────────────────────────── */
+
+.logs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .65rem;
+  margin-bottom: .5rem;
+}
+
+.logs-status {
+  color: var(--muted);
+  font-size: .75rem;
+}
+
+.logs-view {
+  margin: 0;
+  padding: .65rem;
+  max-height: 22rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .72rem;
+  line-height: 1.35;
+  color: var(--text);
+  background: #050505;
+  border: 1px solid var(--line);
+  white-space: pre-wrap;
+  word-break: break-word;
+}

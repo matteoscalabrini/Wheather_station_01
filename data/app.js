@@ -22,7 +22,12 @@ const postNow = document.querySelector("#postNow");
 const postHint = document.querySelector("#postHint");
 const otaForm = document.querySelector("#otaForm");
 const fsOtaForm = document.querySelector("#fsOtaForm");
+const logsView = document.querySelector("#logsView");
+const logsRefresh = document.querySelector("#logsRefresh");
+const logsAutoRefresh = document.querySelector("#logsAutoRefresh");
+const logsStatus = document.querySelector("#logsStatus");
 let password = "";
+let logsTimer = null;
 
 function showView(name) {
   dashboardView.classList.toggle("hidden", name !== "dashboard");
@@ -315,6 +320,7 @@ loginForm.addEventListener("submit", async (event) => {
     await loadConfig();
     adminPanel.classList.remove("hidden");
     adminState.textContent = "Unlocked";
+    refreshLogs();
   } catch {
     adminState.textContent = "Denied";
   }
@@ -454,6 +460,54 @@ fsOtaForm.addEventListener("submit", (event) => {
   event.preventDefault();
   uploadOta("#fsOtaFile", "/api/ota/upload-spiffs", "#fsOtaState");
 });
+
+function formatLogTimestamp(uptimeMs) {
+  if (!Number.isFinite(uptimeMs)) return "----";
+  const totalSec = Math.floor(uptimeMs / 1000);
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+async function refreshLogs() {
+  if (!logsView) return;
+  try {
+    const response = await fetch(`/api/admin/logs?${withPassword()}`, { cache: "no-store" });
+    if (!response.ok) {
+      if (logsStatus) logsStatus.textContent = response.status === 401 ? "Locked" : `HTTP ${response.status}`;
+      return;
+    }
+    const data = await response.json();
+    const lines = Array.isArray(data.lines) ? data.lines : [];
+    if (lines.length === 0) {
+      logsView.textContent = "(no log entries yet)";
+    } else {
+      logsView.textContent = lines
+        .map((entry) => `[${formatLogTimestamp(entry.t)}] ${entry.m}`)
+        .join("\n");
+    }
+    logsView.scrollTop = logsView.scrollHeight;
+    if (logsStatus) {
+      logsStatus.textContent = `${lines.length} of ${data.totalWritten ?? lines.length} (uptime ${formatLogTimestamp(data.uptimeMs)})`;
+    }
+  } catch {
+    if (logsStatus) logsStatus.textContent = "Fetch failed";
+  }
+}
+
+function setLogsAutoRefresh(enabled) {
+  if (logsTimer) {
+    clearInterval(logsTimer);
+    logsTimer = null;
+  }
+  if (enabled) {
+    logsTimer = setInterval(refreshLogs, 3000);
+  }
+}
+
+logsRefresh?.addEventListener("click", refreshLogs);
+logsAutoRefresh?.addEventListener("change", () => setLogsAutoRefresh(logsAutoRefresh.checked));
 
 clearWifiPassword?.addEventListener("change", updateWifiPasswordMode);
 updateWifiPasswordMode();
