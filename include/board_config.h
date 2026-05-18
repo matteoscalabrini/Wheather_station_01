@@ -5,8 +5,8 @@
 namespace BoardConfig {
 
 static constexpr char kBoardName[] = "ESP32 Dev Module";
-static constexpr char kFirmwareVersion[] = "T3 V1.6.3";
-static constexpr char kSpiffsVersion[] = "T3 V1.6.3";
+static constexpr char kFirmwareVersion[] = "V_1.7.2_Remote";
+static constexpr char kSpiffsVersion[] = "V_1.7.2_Remote";
 
 // ─── I2C Bus 0 (Display bus, Software I2C) — SDA=32, SCL=33 ─────────────────
 // Devices: up to 2x SH1107 displays
