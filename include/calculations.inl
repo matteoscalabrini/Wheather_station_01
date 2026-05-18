@@ -134,9 +134,47 @@ static ForecastState classifyForecast(float delta3hHpa, const WeatherSample &wea
     return forecast;
 }
 
-static void recordForecastHistory(const WeatherSample &weather, uint32_t nowMs) {
+static constexpr uint32_t kForecastRtcStateMagic = 0x46524332UL;
+
+static void resetForecastHistoryState() {
+    memset(gForecastHistory, 0, sizeof(gForecastHistory));
+    gForecastHistoryCount = 0;
+    gForecastHistoryNext = 0;
+    gForecastLastSampleMs = 0;
+    gForecastRetainedBaseMs = 0;
+    gForecastSleepPlannedMs = 0;
+    gForecastRtcMagic = kForecastRtcStateMagic;
+}
+
+static void initializeForecastClock() {
+    if (gForecastRtcMagic != kForecastRtcStateMagic || !gBootedFromTimerWake) {
+        resetForecastHistoryState();
+        return;
+    }
+    if (gForecastHistoryCount > kForecastHistoryCapacity ||
+        gForecastHistoryNext >= kForecastHistoryCapacity) {
+        resetForecastHistoryState();
+        return;
+    }
+
+    gForecastRetainedBaseMs += gForecastSleepPlannedMs;
+    gForecastSleepPlannedMs = 0;
+}
+
+static uint64_t forecastNowMs() {
+    return gForecastRetainedBaseMs + (uint64_t)millis();
+}
+
+static void prepareForecastForDeepSleep(uint32_t sleepMs) {
+    if (gForecastRtcMagic != kForecastRtcStateMagic) resetForecastHistoryState();
+    gForecastRetainedBaseMs = forecastNowMs();
+    gForecastSleepPlannedMs = sleepMs;
+}
+
+static void recordForecastHistory(const WeatherSample &weather, uint64_t nowMs) {
     if (!isWeatherSampleValid(weather)) return;
-    if (!hasElapsedMs(nowMs, gForecastLastSampleMs, BoardConfig::kForecastSampleMs)) {
+    if (gForecastLastSampleMs != 0 &&
+        (nowMs - gForecastLastSampleMs) < BoardConfig::kForecastSampleMs) {
         return;
     }
 
@@ -146,13 +184,14 @@ static void recordForecastHistory(const WeatherSample &weather, uint32_t nowMs) 
     gForecastLastSampleMs = nowMs;
 }
 
-static bool findForecastReferencePoint(uint32_t nowMs, ForecastHistoryPoint &point) {
+static bool findForecastReferencePoint(uint64_t nowMs, ForecastHistoryPoint &point) {
     bool found = false;
-    uint32_t bestAgeMs = 0;
+    uint64_t bestAgeMs = 0;
 
     for (size_t i = 0; i < gForecastHistoryCount; ++i) {
         const ForecastHistoryPoint &candidate = gForecastHistory[i];
-        const uint32_t ageMs = (uint32_t)(nowMs - candidate.timestampMs);
+        if (candidate.timestampMs > nowMs) continue;
+        const uint64_t ageMs = nowMs - candidate.timestampMs;
         if (ageMs < BoardConfig::kForecastLookbackMs) continue;
         if (!found || ageMs < bestAgeMs) {
             point = candidate;
@@ -164,7 +203,7 @@ static bool findForecastReferencePoint(uint32_t nowMs, ForecastHistoryPoint &poi
     return found;
 }
 
-static ForecastState computeForecast(const WeatherSample &weather, uint32_t nowMs) {
+static ForecastState computeForecast(const WeatherSample &weather, uint64_t nowMs) {
     ForecastState forecast = {ForecastCode::Waiting, 0.0f, false};
     if (!isWeatherSampleValid(weather)) return forecast;
 

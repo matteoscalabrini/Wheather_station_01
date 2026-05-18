@@ -155,11 +155,12 @@ Remote website management:
 - Remote config is fetched from `/api/device/config` only during an already scheduled post WiFi session; the `1800000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
 - Firmware/SPIFFS update checks are fetched from `/api/device/firmware?version=<firmware>&spiffs=<spiffs>` only during an already scheduled post WiFi session; the `14400000 ms` default is a minimum cadence and does not start an extra WiFi connection by itself.
 - Remote config can update solar thresholds, sleep/post intervals, battery percentage bounds, battery lockout thresholds/wake interval, `serverPostEnabled`, **Debug AP always**, and the remote pull/check intervals.
+- The website can queue one remote action in `/api/device/config`: `displayReboot` reinitializes all OLEDs and forces a full redraw, while `deviceReboot` restarts the ESP32.
 - Changing `serverPostDarkMs` or `solarDeepSleepWakeMs` resets the dark-wake counter so the next dark post cadence starts cleanly.
 - Remote config does not accept WiFi credentials, post tokens, or admin passwords.
 - If the website firmware manifest is enabled and has a version different from `BoardConfig::kFirmwareVersion`, the station downloads the binary URL, adds the bearer token for URLs on the configured website origin, checks size/SHA-256 when provided, installs with OTA, and reboots.
 - If the website SPIFFS manifest is enabled and has a version different from the stored SPIFFS version, the station downloads the SPIFFS image, adds the bearer token for URLs on the configured website origin, checks size/SHA-256 when provided, installs it with OTA, stores the new SPIFFS version, and reboots.
-- Posted telemetry includes the current firmware version, SPIFFS version, and remote-configurable settings so the website admin page can show current station values and update status.
+- Posted telemetry includes the current firmware version, SPIFFS version, remote-configurable settings, and physical OLED status. The payload has a `displayStatus` summary (`allOnline`, counts, masks, and offline display IDs) plus per-display `displayOnline`, bus, and I2C address fields.
 - Dark timer wake remains burst-only: if the station wakes from deep sleep in dark mode, it posts when due, runs any due remote management in that same WiFi session, and returns to sleep.
 
 Default AP:
@@ -172,7 +173,7 @@ Default admin password: `admin`.
 
 Web routes:
 - `/` — SPIFFS OLED-style dashboard with the 9 display groups and a top-right admin menu
-- `/api/status` — public JSON telemetry
+- `/api/status` — public JSON telemetry, including physical OLED online/offline status
 - `/api/admin/config` — password-protected settings GET/POST
 - `/api/admin/wifi-scan` — password-protected WiFi scan
 - `/api/admin/wifi-clear-cache` — password-protected clear of saved station WiFi SSID/password plus ESP32 STA cache reset
@@ -211,6 +212,7 @@ On dedicated hardware sensor bus 5. Addresses probed: `0x76` (primary), `0x77` (
 Sampling: forced mode, ×1 oversampling, filter off. The sensor sleeps between reads and wakes only for each sample.
 Derived values: dew point, heat index, and a fixed-altitude 3-hour pressure-trend forecast.
 The forecast screen replaces the old dew-point screen and becomes meaningful after roughly 3 hours of pressure history.
+The forecast history and clock are retained across timer deep sleep, so dark-mode wake cycles do not restart the 3-hour window; full power/reset boots start a fresh history.
 If the BME280 disappears and comes back, the maintenance task reprobes the bus and re-runs driver initialization automatically.
 
 ### INA219 Power Monitors

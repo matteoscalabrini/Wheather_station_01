@@ -28,7 +28,7 @@ static void sensorTask(void *parameter) {
             const WeatherSample measured = readWeatherSample();
             if (isWeatherSampleValid(measured)) {
                 weather = measured;
-                const uint32_t nowMs = millis();
+                const uint64_t nowMs = forecastNowMs();
                 recordForecastHistory(weather, nowMs);
                 forecast = computeForecast(weather, nowMs);
             } else {

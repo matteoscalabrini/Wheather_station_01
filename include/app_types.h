@@ -78,7 +78,7 @@ struct DisplayRuntimeState {
 };
 
 struct ForecastHistoryPoint {
-    uint32_t timestampMs;
+    uint64_t timestampMs;
     float pressureHpa;
 };
 

@@ -1,5 +1,6 @@
 const grid = document.querySelector("#displayGrid");
 const solarMode = document.querySelector("#solarMode");
+const displayState = document.querySelector("#displayState");
 const wifiState = document.querySelector("#wifiState");
 const postState = document.querySelector("#postState");
 const remoteState = document.querySelector("#remoteState");
@@ -247,6 +248,13 @@ function renderRemoteStatus(data) {
 
 function renderStatus(data) {
   solarMode.textContent = `MODE ${String(data.solarMode || "--").toUpperCase()}`;
+  const displayStatus = data.displayStatus || {};
+  if (displayState) {
+    const onlineCount = Number(displayStatus.onlineCount ?? (data.displays || []).filter((item) => item.displayOnline !== false).length);
+    const totalCount = Number(displayStatus.count ?? (data.displays || []).length);
+    const allOnline = displayStatus.allOnline ?? (totalCount > 0 && onlineCount === totalCount);
+    displayState.textContent = allOnline ? `DISPLAYS ${onlineCount}/${totalCount}` : `DISPLAYS ${onlineCount}/${totalCount} CHECK`;
+  }
   renderWifiStatus(data);
   renderPostStatus(data);
   renderRemoteStatus(data);
@@ -255,11 +263,15 @@ function renderStatus(data) {
   (data.displays || []).forEach((item) => {
     const tile = document.createElement("article");
     tile.className = "tile";
+    const physicalOnline = item.displayOnline !== false;
+    const sourceOnline = item.sourceOnline ?? item.online;
+    const statusText = physicalOnline ? (sourceOnline ? "LIVE" : "OFF") : "DISPLAY OFF";
+    const statusClass = physicalOnline && sourceOnline ? "online" : "offline";
     const secondary = item.secondaryLabel ?
       `${item.secondaryLabel} ${fmt(item.secondary, item.secondaryUnit)}` :
       fmt(item.secondary, item.secondaryUnit);
     tile.innerHTML = `
-      <header><span>${item.label}</span><span class="${item.online ? "online" : "offline"}">${item.online ? "LIVE" : "OFF"}</span></header>
+      <header><span>${item.label}</span><span class="${statusClass}">${statusText}</span></header>
       <div class="value">${fmt(item.primary, item.primaryUnit)}</div>
       <div class="secondary">${secondary || ""}</div>
     `;
@@ -284,6 +296,7 @@ async function refreshStatus() {
     const response = await fetch("/api/status", { cache: "no-store" });
     renderStatus(await response.json());
   } catch {
+    if (displayState) displayState.textContent = "DISPLAYS --";
     wifiState.textContent = "LINK LOST";
     setWifiHint("Dashboard cannot reach the device.", "bad");
     postState.textContent = "LINK LOST";

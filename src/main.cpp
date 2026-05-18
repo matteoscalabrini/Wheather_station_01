@@ -74,10 +74,13 @@ U8G2 *gDisplays[kNumDisplays] = {
 };
 
 DisplayRuntimeState gDisplayRuntime[kNumDisplays] = {};
-ForecastHistoryPoint gForecastHistory[kForecastHistoryCapacity] = {};
-size_t gForecastHistoryCount = 0;
-size_t gForecastHistoryNext = 0;
-uint32_t gForecastLastSampleMs = 0;
+RTC_DATA_ATTR ForecastHistoryPoint gForecastHistory[kForecastHistoryCapacity] = {};
+RTC_DATA_ATTR size_t gForecastHistoryCount = 0;
+RTC_DATA_ATTR size_t gForecastHistoryNext = 0;
+RTC_DATA_ATTR uint64_t gForecastLastSampleMs = 0;
+RTC_DATA_ATTR uint64_t gForecastRetainedBaseMs = 0;
+RTC_DATA_ATTR uint32_t gForecastSleepPlannedMs = 0;
+RTC_DATA_ATTR uint32_t gForecastRtcMagic = 0;
 SolarLightMode gSolarLightMode = SolarLightMode::Unknown;
 uint32_t gSolarDarkSinceMs = 0;
 bool gDisplaysForcedOff = false;
@@ -132,6 +135,7 @@ void setup() {
         repairRuntimeSettingsPreservingIdentity();
         saveRuntimeSettings();
     }
+    initializeForecastClock();
 
     takeMutex(gSensorBusMutex);
     Wire.begin(BoardConfig::kI2c5Sda, BoardConfig::kI2c5Scl);
@@ -183,7 +187,7 @@ void setup() {
     }
 
     if (gTelemetry.bme280Online) {
-        const uint32_t nowMs = millis();
+        const uint64_t nowMs = forecastNowMs();
         recordForecastHistory(gTelemetry.weather, nowMs);
         gTelemetry.forecast = computeForecast(gTelemetry.weather, nowMs);
     }

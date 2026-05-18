@@ -139,7 +139,7 @@ static void maintainSensorConnections() {
             bmeAddress = detectedBmeAddress;
             bmeOnline = beginBme280OnBus(detectedBmeAddress, weather);
             if (bmeOnline) {
-                const uint32_t nowMs = millis();
+                const uint64_t nowMs = forecastNowMs();
                 recordForecastHistory(weather, nowMs);
                 forecast = computeForecast(weather, nowMs);
             } else {

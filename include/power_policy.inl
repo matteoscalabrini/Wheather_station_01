@@ -167,6 +167,7 @@ static void enterSolarDeepSleep() {
 
     const uint64_t wakeUs = (uint64_t)gSettings.solarDeepSleepWakeMs * 1000ULL;
     esp_sleep_enable_timer_wakeup(wakeUs);
+    prepareForecastForDeepSleep(gSettings.solarDeepSleepWakeMs);
     Serial.printf("Solar mode dark: entering deep sleep for %lu ms\n",
         (unsigned long)gSettings.solarDeepSleepWakeMs);
     Serial.flush();
@@ -187,6 +188,7 @@ static void enterBatteryLockoutDeepSleep(const PowerSample &battery,
 
     const uint64_t wakeUs = (uint64_t)gSettings.batteryLockoutWakeMs * 1000ULL;
     esp_sleep_enable_timer_wakeup(wakeUs);
+    prepareForecastForDeepSleep(gSettings.batteryLockoutWakeMs);
 
     if (isPowerSampleValid(battery)) {
         Serial.printf("Battery lockout: %s at %.2f V; entering deep sleep for %lu ms\n",

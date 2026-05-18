@@ -26,6 +26,12 @@ static String jsonFloat(float value, uint8_t digits = 2) {
     return String(value, (unsigned int)digits);
 }
 
+static String jsonHexByte(uint8_t value) {
+    char buffer[5];
+    snprintf(buffer, sizeof(buffer), "0x%02X", value);
+    return jsonString(buffer);
+}
+
 static void setWifiMessage(const char *message) {
     copySetting(gNetworkRuntime.wifiMessage, sizeof(gNetworkRuntime.wifiMessage),
                 message != nullptr ? message : "");
@@ -310,7 +316,13 @@ static void processCaptiveDnsIfNeeded() {
 }
 
 static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) {
+    const DisplaySlot &slot = kDisplaySlots[index];
     String payload = "{";
+    payload += "\"id\":" + String(index) + ",";
+    payload += "\"displayOnline\":" + jsonBool(state.displayOnline[index]) + ",";
+    payload += "\"bus\":" + String(slot.busIndex) + ",";
+    payload += "\"i2cAddress\":" + String(slot.i2cAddress) + ",";
+    payload += "\"i2cAddressHex\":" + jsonHexByte(slot.i2cAddress) + ",";
     switch (index) {
         case 0:
             payload += "\"label\":\"ENV TEMP\",";
@@ -318,18 +330,21 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primaryUnit\":\"C\",";
             payload += "\"secondary\":" + jsonFloat(state.weather.heatIndexC, 1) + ",";
             payload += "\"secondaryLabel\":\"FEELS LIKE\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.bme280Online) + ",";
             payload += "\"online\":" + jsonBool(state.bme280Online);
             break;
         case 1:
             payload += "\"label\":\"ENV HUM\",";
             payload += "\"primary\":" + jsonFloat(state.weather.humidityPct, 1) + ",";
             payload += "\"primaryUnit\":\"%\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.bme280Online) + ",";
             payload += "\"online\":" + jsonBool(state.bme280Online);
             break;
         case 2:
             payload += "\"label\":\"ENV PRES\",";
             payload += "\"primary\":" + jsonFloat(state.weather.pressureHpa, 1) + ",";
             payload += "\"primaryUnit\":\"hPa\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.bme280Online) + ",";
             payload += "\"online\":" + jsonBool(state.bme280Online);
             break;
         case 3:
@@ -337,6 +352,7 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primary\":" + jsonString(forecastDisplayLabel(state.forecast.code)) + ",";
             payload += "\"secondary\":" + jsonFloat(state.forecast.delta3hHpa, 1) + ",";
             payload += "\"secondaryUnit\":\"hPa\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.bme280Online && state.forecast.ready) + ",";
             payload += "\"online\":" + jsonBool(state.bme280Online && state.forecast.ready);
             break;
         case 4:
@@ -345,6 +361,7 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primaryUnit\":\"m/s\",";
             payload += "\"secondary\":" + String(state.wind.beaufort) + ",";
             payload += "\"secondaryLabel\":\"BFT\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.windSpeedOnline) + ",";
             payload += "\"online\":" + jsonBool(state.windSpeedOnline);
             break;
         case 5:
@@ -352,6 +369,7 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primary\":" + jsonFloat(normalizeRelativeWindDeg(state.wind.directionDeg), 0) + ",";
             payload += "\"primaryUnit\":\"deg\",";
             payload += "\"secondary\":" + jsonString(windRelativeLabel(state.wind.directionDeg)) + ",";
+            payload += "\"sourceOnline\":" + jsonBool(state.windDirOnline) + ",";
             payload += "\"online\":" + jsonBool(state.windDirOnline);
             break;
         case 6:
@@ -360,6 +378,7 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primaryUnit\":\"W\",";
             payload += "\"secondary\":" + jsonFloat(state.solar.loadVoltageV, 2) + ",";
             payload += "\"secondaryUnit\":\"V\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.solarOnline) + ",";
             payload += "\"online\":" + jsonBool(state.solarOnline);
             break;
         case 7:
@@ -368,6 +387,7 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primaryUnit\":\"W\",";
             payload += "\"secondary\":" + jsonFloat(state.battery.loadVoltageV, 2) + ",";
             payload += "\"secondaryUnit\":\"V\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.batteryOnline) + ",";
             payload += "\"online\":" + jsonBool(state.batteryOnline);
             break;
         case 8:
@@ -377,10 +397,45 @@ static String buildDisplayValueJson(uint8_t index, const TelemetryState &state) 
             payload += "\"primaryUnit\":\"%\",";
             payload += "\"secondary\":" + jsonFloat(state.battery.loadVoltageV, 2) + ",";
             payload += "\"secondaryUnit\":\"V\",";
+            payload += "\"sourceOnline\":" + jsonBool(state.batteryOnline && state.batteryPercent >= 0.0f) + ",";
             payload += "\"online\":" + jsonBool(state.batteryOnline && state.batteryPercent >= 0.0f);
             break;
     }
     payload += "}";
+    return payload;
+}
+
+static String buildDisplayStatusJson(const TelemetryState &state) {
+    const uint8_t onlineCount = countOnlineDisplays(state);
+    uint16_t onlineMask = 0;
+    String payload = "{";
+
+    for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        if (state.displayOnline[i]) onlineMask |= (1U << i);
+    }
+
+    payload += "\"count\":" + String(kNumDisplays) + ",";
+    payload += "\"onlineCount\":" + String(onlineCount) + ",";
+    payload += "\"offlineCount\":" + String(kNumDisplays - onlineCount) + ",";
+    payload += "\"allOnline\":" + jsonBool(onlineCount == kNumDisplays) + ",";
+    payload += "\"forcedOff\":" + jsonBool(gDisplaysForcedOff) + ",";
+    payload += "\"onlineMask\":" + String(onlineMask) + ",";
+    payload += "\"offlineMask\":" + String((uint16_t)(kDisplayMaskAll & ~onlineMask)) + ",";
+    payload += "\"offline\":[";
+    bool firstOffline = true;
+    for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        if (state.displayOnline[i]) continue;
+        const DisplaySlot &slot = kDisplaySlots[i];
+        if (!firstOffline) payload += ",";
+        payload += "{";
+        payload += "\"id\":" + String(i) + ",";
+        payload += "\"bus\":" + String(slot.busIndex) + ",";
+        payload += "\"i2cAddress\":" + String(slot.i2cAddress) + ",";
+        payload += "\"i2cAddressHex\":" + jsonHexByte(slot.i2cAddress);
+        payload += "}";
+        firstOffline = false;
+    }
+    payload += "]}";
     return payload;
 }
 
@@ -390,7 +445,7 @@ static String buildTelemetryJson() {
     const bool recoveryAp = recoveryApWindowActive(nowMs);
     const uint32_t recoveryRemainingMs = recoveryApRemainingMs(nowMs);
     String payload;
-    payload.reserve(6144);
+    payload.reserve(7168);
     payload = "{";
     payload += "\"board\":" + jsonString(BoardConfig::kBoardName) + ",";
     payload += "\"firmwareVersion\":" + jsonString(gSettings.firmwareVersion) + ",";
@@ -400,6 +455,7 @@ static String buildTelemetryJson() {
     payload += "\"cpuFrequencyMhz\":" + String(getCpuFrequencyMhz()) + ",";
     payload += "\"solarMode\":" + jsonString(solarLightModeLabel(gSolarLightMode)) + ",";
     payload += "\"displaysForcedOff\":" + jsonBool(gDisplaysForcedOff) + ",";
+    payload += "\"displayStatus\":" + buildDisplayStatusJson(state) + ",";
     payload += "\"wifi\":{";
     payload += "\"enabled\":" + jsonBool(gNetworkRuntime.wifiEnabled) + ",";
     payload += "\"ap\":" + jsonBool(gNetworkRuntime.apEnabled) + ",";
@@ -954,6 +1010,62 @@ static void refreshBatteryPercentDisplayIfNeeded(const RuntimeSettings &previous
     requestDisplayRefresh(1U << 8);
 }
 
+static void reinitializeDisplaysForRemoteCommand() {
+    const uint32_t nowMs = millis();
+    bool onlineState[kNumDisplays] = {};
+
+    takeMutex(gDisplayBusMutex);
+    for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        resetDisplayRuntimeState(i);
+        onlineState[i] = initDisplay(i);
+        if (onlineState[i]) {
+            gDisplayRuntime[i].lastProbeMs = nowMs;
+            gDisplayRuntime[i].lastActivityMs = nowMs;
+            gDisplayRuntime[i].powerSave = false;
+        }
+        esp_task_wdt_reset();
+        taskDelayMs(1);
+    }
+    giveMutex(gDisplayBusMutex);
+
+    for (uint8_t i = 0; i < kNumDisplays; ++i) {
+        setDisplayOnline(i, onlineState[i]);
+    }
+
+    if (gDisplaysForcedOff) {
+        setAllDisplaysPowerSave(true);
+    } else {
+        applyDisplayContrastForSolarMode(gSolarLightMode, true);
+        requestDisplayRefresh(kDisplayMaskAll);
+    }
+}
+
+static bool applyRemoteDeviceCommand(const String &commandType, const String &commandId) {
+    if (!commandType.length()) return true;
+
+    if (commandType == "displayReboot") {
+        reinitializeDisplaysForRemoteCommand();
+        setRemoteConfigMessage("remote_command_display_rebooted");
+        Serial.printf("Remote command applied: displayReboot %s\n",
+            commandId.length() ? commandId.c_str() : "(no id)");
+        return true;
+    }
+
+    if (commandType == "deviceReboot") {
+        setRemoteConfigMessage("remote_command_device_rebooting");
+        Serial.printf("Remote command applied: deviceReboot %s\n",
+            commandId.length() ? commandId.c_str() : "(no id)");
+        Serial.flush();
+        taskDelayMs(500);
+        ESP.restart();
+        return true;
+    }
+
+    setRemoteConfigMessage("remote_command_unknown");
+    Serial.printf("Remote command ignored: unknown type %s\n", commandType.c_str());
+    return false;
+}
+
 static bool darkWakeCadenceChanged(const RuntimeSettings &previous,
                                    const RuntimeSettings &next) {
     return previous.serverPostDarkMs != next.serverPostDarkMs ||
@@ -973,6 +1085,12 @@ static bool applyRemoteConfigPayload(const String &payload) {
         setRemoteConfigMessage("remote_config_rejected");
         return false;
     }
+
+    String commandType;
+    String commandId;
+    const bool hasCommand = jsonReadStringField(payload, "deviceCommandType", commandType) &&
+        commandType.length() > 0;
+    jsonReadStringField(payload, "deviceCommandId", commandId);
 
     RuntimeSettings next = gSettings;
     bool anyField = false;
@@ -998,7 +1116,7 @@ static bool applyRemoteConfigPayload(const String &payload) {
 
     if (!anyField) {
         setRemoteConfigMessage("remote_config_empty");
-        return true;
+        return hasCommand ? applyRemoteDeviceCommand(commandType, commandId) : true;
     }
     if (!validRuntimeSettings(next)) {
         setRemoteConfigMessage("remote_config_invalid");
@@ -1006,7 +1124,7 @@ static bool applyRemoteConfigPayload(const String &payload) {
     }
     if (runtimeSettingsEqual(next, gSettings)) {
         setRemoteConfigMessage("remote_config_current");
-        return true;
+        return hasCommand ? applyRemoteDeviceCommand(commandType, commandId) : true;
     }
 
     const RuntimeSettings previous = gSettings;
@@ -1020,7 +1138,7 @@ static bool applyRemoteConfigPayload(const String &payload) {
     if (darkWakeCadenceChanged(previous, gSettings)) resetDarkWakeCadenceState();
     refreshBatteryPercentDisplayIfNeeded(previous);
     setRemoteConfigMessage("remote_config_saved");
-    return true;
+    return hasCommand ? applyRemoteDeviceCommand(commandType, commandId) : true;
 }
 
 static bool pullRemoteConfigNow() {
